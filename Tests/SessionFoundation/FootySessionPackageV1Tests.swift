@@ -150,6 +150,63 @@ struct FootySessionPackageV1Tests {
         #expect(SessionSummaryMetricsV1().distance == nil)
     }
 
+    @Test("capture diagnostics carry per-stream delivery stats")
+    func captureDiagnosticsCarryPerStreamStats() throws {
+        let diagnostics = CaptureDiagnosticsV1(
+            recordedAt: fixtureDate,
+            source: .batchedCoreMotion,
+            accelerometerAvailability: .available,
+            deviceMotionAvailability: .available,
+            accelerometerSampleCount: 12_300,
+            deviceMotionSampleCount: 11_900,
+            accelerometerReportedHz: 50,
+            deviceMotionReportedHz: 25,
+            accelerometerBatchCount: 41,
+            deviceMotionBatchCount: 39,
+            accelerometerLastError: nil,
+            deviceMotionLastError: "Device-motion stream ended early.",
+            maximumObservedGap: 0.32
+        )
+        let encoded = try PropertyListEncoder().encode(diagnostics)
+        let decoded = try PropertyListDecoder().decode(CaptureDiagnosticsV1.self, from: encoded)
+
+        #expect(decoded.accelerometerReportedHz == 50)
+        #expect(decoded.deviceMotionReportedHz == 25)
+        #expect(decoded.accelerometerBatchCount == 41)
+        #expect(decoded.deviceMotionBatchCount == 39)
+        #expect(decoded.accelerometerLastError == nil)
+        #expect(decoded.deviceMotionLastError == "Device-motion stream ended early.")
+        #expect(decoded.maximumObservedGap == 0.32)
+    }
+
+    @Test("diagnostics sealed before the per-stream fields still decode")
+    func legacyDiagnosticsDecodeWithDefaults() throws {
+        // Encode the exact pre-extension shape through a mirror struct with
+        // synthesized Codable, so the fixture matches what earlier builds wrote.
+        let legacy = LegacyCaptureDiagnosticsV1(
+            recordedAt: fixtureDate,
+            source: .batchedCoreMotion,
+            accelerometerAvailability: .available,
+            deviceMotionAvailability: .available,
+            accelerometerSampleCount: 9_000,
+            deviceMotionSampleCount: 8_800,
+            maximumObservedGap: 0.25
+        )
+        let data = try PropertyListEncoder().encode(legacy)
+        let decoded = try PropertyListDecoder().decode(CaptureDiagnosticsV1.self, from: data)
+
+        #expect(decoded.source == .batchedCoreMotion)
+        #expect(decoded.accelerometerSampleCount == 9_000)
+        #expect(decoded.deviceMotionSampleCount == 8_800)
+        #expect(decoded.maximumObservedGap == 0.25)
+        #expect(decoded.accelerometerReportedHz == nil)
+        #expect(decoded.deviceMotionReportedHz == nil)
+        #expect(decoded.accelerometerBatchCount == 0)
+        #expect(decoded.deviceMotionBatchCount == 0)
+        #expect(decoded.accelerometerLastError == nil)
+        #expect(decoded.deviceMotionLastError == nil)
+    }
+
     @Test("the whole-file digest is stable for identical bytes")
     func digestIsStable() throws {
         let directory = try makeTemporaryDirectory()
@@ -170,6 +227,18 @@ struct FootySessionPackageV1Tests {
     }
 
     private let fixtureDate = Date(timeIntervalSinceReferenceDate: 123_456)
+
+    /// Mirrors the pre-extension CaptureDiagnosticsV1 shape exactly, including
+    /// the synthesized Codable behavior, to produce a legacy-format fixture.
+    private struct LegacyCaptureDiagnosticsV1: Codable {
+        let recordedAt: Date
+        let source: MotionCaptureSourceV1
+        let accelerometerAvailability: StreamAvailabilityV1
+        let deviceMotionAvailability: StreamAvailabilityV1
+        let accelerometerSampleCount: Int
+        let deviceMotionSampleCount: Int
+        let maximumObservedGap: TimeInterval?
+    }
 
     private func fixtureEnvelope() -> SessionEnvelopeV1 {
         SessionEnvelopeV1(

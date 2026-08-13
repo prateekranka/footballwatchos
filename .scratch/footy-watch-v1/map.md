@@ -29,10 +29,16 @@ The map must also define a bounded conditional R&D extension for personalized Es
 - ✅ [HealthKit ownership and deletion boundary](issues/06-define-healthkit-boundary.md):
   Watch-only HealthKit access, unavailable-not-zero read semantics, private-only
   ordinary deletion, and exact-ledger-only optional HealthKit mutation.
+- ✅ [Watch Football-Session experience](issues/07-specify-watch-session-experience.md):
+  eight-state machine (authorizing through failed), Start countdown and haptic,
+  no auto-pause, protected Hold-to-Finish, background reopen, interruption
+  sealing and package recovery, battery and sensor-quality warnings,
+  original-recording preservation, and the immediate saved summary — specified
+  with acceptance rules in specs/07.
 
 ## Live roadmap
 
-Status: **2/15 resolved** · Ticket 1 claimed · Tickets 3 and 7 ready · 10 blocked.
+Status: **3/15 resolved** · Ticket 1 claimed · Ticket 3 ready · 9 blocked.
 
 ```mermaid
 flowchart LR
@@ -41,7 +47,7 @@ flowchart LR
         T3["⚪ 3 · Primary-venue GPS evidence"]
         T5["✅ 5 · Sync and storage architecture"]
         T6["✅ 6 · HealthKit boundary"]
-        T7["⚪ 7 · Watch session experience"]
+        T7["✅ 7 · Watch session experience"]
     end
     subgraph B["Evidence and specifications"]
         T2["🔒 2 · 90-minute endurance"]

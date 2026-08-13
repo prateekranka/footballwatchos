@@ -31,6 +31,22 @@ On the physical Apple Watch Series 8, which supported Core Motion capture path p
 - The physical target is still confirmed as paired `Watch6,15` on watchOS 26.5, but `devicectl` reports its local-network connection as disconnected. No physical samples, delivered frequency, gap distribution, energy cost, or thermal behavior have been measured yet.
 - Status remains `claimed`, not `resolved`. Resolution still requires a signed install and real Series 8 workout run with the on-Watch diagnostics recorded; therefore Tickets 02 and 09 remain blocked.
 
+### 2026-08-13 — Motion evidence now persists in the package; full sensors re-enabled
+
+- `CaptureDiagnosticsV1` gained the per-stream delivery fields ticket 1 asks
+  for: reported accelerometer and device-motion Hz, batch counts, and per-stream
+  last-error text, decoded tolerantly so packages sealed before this change
+  still read. `MotionCaptureController.makeDiagnostics()` populates them, so the
+  sealed `.footysession` package now contains the complete capture record
+  instead of only the on-screen snapshot.
+- `WorkoutRecorder` motion runtime mode flipped from the safe-mode
+  `.healthKitOnly` back to `.fullSensors`, so the next real session records
+  batched Core Motion (or the labelled 50 Hz fallback) into the package.
+- Verified: iOS test suite 19/19 and watchOS test suite 6/6 pass on
+  xcodebuild (FlowDeck is license-blocked on this machine).
+- The physical go/no-go remains unresolved: a signed install and a real
+  Series 8 workout with the on-Watch diagnostics are still required.
+
 ### 2026-07-28 — Provisional 90-minute battery planning hypothesis
 
 - This is a planning estimate, not physical-device evidence: budget roughly **20–30 battery percentage points** for a 90-minute session on a healthy Series 8 battery. If Battery Health Maximum Capacity is near 80%, plan closer to **25–38 points**.

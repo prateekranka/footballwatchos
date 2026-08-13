@@ -587,16 +587,23 @@ final class MotionCaptureController: ObservableObject {
     }
 
     private func makeDiagnostics() -> CaptureDiagnosticsV1 {
-        CaptureDiagnosticsV1(
+        let accelerometer = accelerometerState.metrics
+        let deviceMotion = deviceMotionState.metrics
+        let combinedGap = max(accelerometer.maxGap, deviceMotion.maxGap)
+        return CaptureDiagnosticsV1(
             recordedAt: Date(),
             source: plan?.source ?? .unavailable(reason: .captureNotStarted),
             accelerometerAvailability: accelerometerState.finalAvailability,
             deviceMotionAvailability: deviceMotionState.finalAvailability,
             accelerometerSampleCount: accelerometerState.sampleCount,
             deviceMotionSampleCount: deviceMotionState.sampleCount,
-            maximumObservedGap: max(accelerometerState.maxGap, deviceMotionState.maxGap) > 0
-                ? max(accelerometerState.maxGap, deviceMotionState.maxGap)
-                : nil
+            accelerometerReportedHz: accelerometer.reportedHz,
+            deviceMotionReportedHz: deviceMotion.reportedHz,
+            accelerometerBatchCount: accelerometer.batchCount,
+            deviceMotionBatchCount: deviceMotion.batchCount,
+            accelerometerLastError: accelerometer.lastError,
+            deviceMotionLastError: deviceMotion.lastError,
+            maximumObservedGap: combinedGap > 0 ? combinedGap : nil
         )
     }
 

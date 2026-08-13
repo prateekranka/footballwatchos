@@ -221,6 +221,12 @@ public struct CaptureDiagnosticsV1: Codable, Sendable, Equatable {
     public let deviceMotionAvailability: StreamAvailabilityV1
     public let accelerometerSampleCount: Int
     public let deviceMotionSampleCount: Int
+    public let accelerometerReportedHz: Double?
+    public let deviceMotionReportedHz: Double?
+    public let accelerometerBatchCount: Int
+    public let deviceMotionBatchCount: Int
+    public let accelerometerLastError: String?
+    public let deviceMotionLastError: String?
     public let maximumObservedGap: TimeInterval?
 
     public init(
@@ -230,6 +236,12 @@ public struct CaptureDiagnosticsV1: Codable, Sendable, Equatable {
         deviceMotionAvailability: StreamAvailabilityV1,
         accelerometerSampleCount: Int,
         deviceMotionSampleCount: Int,
+        accelerometerReportedHz: Double? = nil,
+        deviceMotionReportedHz: Double? = nil,
+        accelerometerBatchCount: Int = 0,
+        deviceMotionBatchCount: Int = 0,
+        accelerometerLastError: String? = nil,
+        deviceMotionLastError: String? = nil,
         maximumObservedGap: TimeInterval? = nil
     ) {
         self.recordedAt = recordedAt
@@ -238,7 +250,54 @@ public struct CaptureDiagnosticsV1: Codable, Sendable, Equatable {
         self.deviceMotionAvailability = deviceMotionAvailability
         self.accelerometerSampleCount = accelerometerSampleCount
         self.deviceMotionSampleCount = deviceMotionSampleCount
+        self.accelerometerReportedHz = accelerometerReportedHz
+        self.deviceMotionReportedHz = deviceMotionReportedHz
+        self.accelerometerBatchCount = accelerometerBatchCount
+        self.deviceMotionBatchCount = deviceMotionBatchCount
+        self.accelerometerLastError = accelerometerLastError
+        self.deviceMotionLastError = deviceMotionLastError
         self.maximumObservedGap = maximumObservedGap
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case recordedAt
+        case source
+        case accelerometerAvailability
+        case deviceMotionAvailability
+        case accelerometerSampleCount
+        case deviceMotionSampleCount
+        case accelerometerReportedHz
+        case deviceMotionReportedHz
+        case accelerometerBatchCount
+        case deviceMotionBatchCount
+        case accelerometerLastError
+        case deviceMotionLastError
+        case maximumObservedGap
+    }
+
+    /// Packages sealed before the per-stream delivery fields existed must still
+    /// decode: the added keys are read optionally and default to nil/zero.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        recordedAt = try container.decode(Date.self, forKey: .recordedAt)
+        source = try container.decode(MotionCaptureSourceV1.self, forKey: .source)
+        accelerometerAvailability = try container.decode(
+            StreamAvailabilityV1.self,
+            forKey: .accelerometerAvailability
+        )
+        deviceMotionAvailability = try container.decode(
+            StreamAvailabilityV1.self,
+            forKey: .deviceMotionAvailability
+        )
+        accelerometerSampleCount = try container.decode(Int.self, forKey: .accelerometerSampleCount)
+        deviceMotionSampleCount = try container.decode(Int.self, forKey: .deviceMotionSampleCount)
+        accelerometerReportedHz = try container.decodeIfPresent(Double.self, forKey: .accelerometerReportedHz)
+        deviceMotionReportedHz = try container.decodeIfPresent(Double.self, forKey: .deviceMotionReportedHz)
+        accelerometerBatchCount = try container.decodeIfPresent(Int.self, forKey: .accelerometerBatchCount) ?? 0
+        deviceMotionBatchCount = try container.decodeIfPresent(Int.self, forKey: .deviceMotionBatchCount) ?? 0
+        accelerometerLastError = try container.decodeIfPresent(String.self, forKey: .accelerometerLastError)
+        deviceMotionLastError = try container.decodeIfPresent(String.self, forKey: .deviceMotionLastError)
+        maximumObservedGap = try container.decodeIfPresent(TimeInterval.self, forKey: .maximumObservedGap)
     }
 }
 
