@@ -70,22 +70,79 @@ public actor FileSessionRepository {
         }
     }
 
+    /// A three-component vector in the same axes Core Motion reports.
+    public struct Vector3: Sendable, Equatable {
+        public let x: Double
+        public let y: Double
+        public let z: Double
+
+        public init(x: Double, y: Double, z: Double) {
+            self.x = x
+            self.y = y
+            self.z = z
+        }
+    }
+
+    /// One raw accelerometer reading. `timestamp` is the CoreMotion epoch
+    /// (`TimeInterval` since device boot); rebasing to session-relative time is
+    /// a rendering concern and deliberately not performed here.
+    public struct MotionSamplePoint: Sendable, Equatable {
+        public let timestamp: TimeInterval
+        public let x: Double
+        public let y: Double
+        public let z: Double
+
+        public init(timestamp: TimeInterval, x: Double, y: Double, z: Double) {
+            self.timestamp = timestamp
+            self.x = x
+            self.y = y
+            self.z = z
+        }
+    }
+
+    /// One raw device-motion reading with its three vectors. `timestamp` is the
+    /// CoreMotion epoch; no conversion is performed here.
+    public struct DeviceMotionSamplePoint: Sendable, Equatable {
+        public let timestamp: TimeInterval
+        public let userAcceleration: Vector3
+        public let gravity: Vector3
+        public let rotationRate: Vector3
+
+        public init(
+            timestamp: TimeInterval,
+            userAcceleration: Vector3,
+            gravity: Vector3,
+            rotationRate: Vector3
+        ) {
+            self.timestamp = timestamp
+            self.userAcceleration = userAcceleration
+            self.gravity = gravity
+            self.rotationRate = rotationRate
+        }
+    }
+
     public struct SessionDetail: Sendable, Equatable {
         public let record: SessionRecord
         public let heartRateSnapshots: [ChartPoint]
         public let distanceSnapshots: [ChartPoint]
         public let diagnostics: [CaptureDiagnosticsV1]
+        public let accelerometerSamples: [MotionSamplePoint]
+        public let deviceMotionSamples: [DeviceMotionSamplePoint]
 
         public init(
             record: SessionRecord,
             heartRateSnapshots: [ChartPoint],
             distanceSnapshots: [ChartPoint],
-            diagnostics: [CaptureDiagnosticsV1]
+            diagnostics: [CaptureDiagnosticsV1],
+            accelerometerSamples: [MotionSamplePoint] = [],
+            deviceMotionSamples: [DeviceMotionSamplePoint] = []
         ) {
             self.record = record
             self.heartRateSnapshots = heartRateSnapshots
             self.distanceSnapshots = distanceSnapshots
             self.diagnostics = diagnostics
+            self.accelerometerSamples = accelerometerSamples
+            self.deviceMotionSamples = deviceMotionSamples
         }
     }
 
@@ -256,6 +313,8 @@ public actor FileSessionRepository {
         var heartRateSnapshots: [ChartPoint] = []
         var distanceSnapshots: [ChartPoint] = []
         var diagnostics: [CaptureDiagnosticsV1] = []
+        var accelerometerSamples: [MotionSamplePoint] = []
+        var deviceMotionSamples: [DeviceMotionSamplePoint] = []
 
         for (offset, frame) in read.frames.enumerated() {
             switch frame.payload {
@@ -277,6 +336,36 @@ public actor FileSessionRepository {
                 )
             case let .captureDiagnostics(diagnostic):
                 diagnostics.append(diagnostic)
+            case let .accelerometerBatch(batch):
+                accelerometerSamples.append(contentsOf: batch.samples.map { sample in
+                    MotionSamplePoint(
+                        timestamp: sample.timestamp,
+                        x: sample.acceleration.x,
+                        y: sample.acceleration.y,
+                        z: sample.acceleration.z
+                    )
+                })
+            case let .deviceMotionBatch(batch):
+                deviceMotionSamples.append(contentsOf: batch.samples.map { sample in
+                    DeviceMotionSamplePoint(
+                        timestamp: sample.timestamp,
+                        userAcceleration: Vector3(
+                            x: sample.userAcceleration.x,
+                            y: sample.userAcceleration.y,
+                            z: sample.userAcceleration.z
+                        ),
+                        gravity: Vector3(
+                            x: sample.gravity.x,
+                            y: sample.gravity.y,
+                            z: sample.gravity.z
+                        ),
+                        rotationRate: Vector3(
+                            x: sample.rotationRate.x,
+                            y: sample.rotationRate.y,
+                            z: sample.rotationRate.z
+                        )
+                    )
+                })
             default:
                 break
             }
@@ -286,7 +375,9 @@ public actor FileSessionRepository {
             record: record,
             heartRateSnapshots: heartRateSnapshots,
             distanceSnapshots: distanceSnapshots,
-            diagnostics: diagnostics
+            diagnostics: diagnostics,
+            accelerometerSamples: accelerometerSamples,
+            deviceMotionSamples: deviceMotionSamples
         )
     }
 

@@ -192,6 +192,36 @@ struct FileSessionRepositoryTests {
         #expect(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("tombstones.json").path))
     }
 
+    @Test("imported packages expose accelerometer and device-motion samples")
+    func motionSamplesExposedInDetail() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let repository = try fixture.repository()
+        let package = try fixture.writePackage(
+            sessionID: fixture.firstSessionID,
+            startedAt: fixture.start,
+            includeAccelerometerBatch: true,
+            includeDeviceMotionBatch: true
+        )
+        _ = await repository.importStaged(deliveryID: try fixture.stage(package))
+
+        let detail = try await repository.detail(for: fixture.firstSessionID)
+        #expect(detail.accelerometerSamples.count == 50)
+        #expect(detail.deviceMotionSamples.count == 50)
+
+        let accelerometerSample = try #require(detail.accelerometerSamples.first)
+        #expect(accelerometerSample.timestamp == fixture.start.timeIntervalSinceReferenceDate + 5)
+        #expect(accelerometerSample.x == 0.1)
+        #expect(accelerometerSample.y == 0.2)
+        #expect(accelerometerSample.z == 0.3)
+
+        let motionSample = try #require(detail.deviceMotionSamples.first)
+        #expect(motionSample.timestamp == fixture.start.timeIntervalSinceReferenceDate + 6)
+        #expect(motionSample.userAcceleration == FileSessionRepository.Vector3(x: 0, y: 0, z: 0))
+        #expect(motionSample.gravity == FileSessionRepository.Vector3(x: 0, y: 0, z: 9.81))
+        #expect(motionSample.rotationRate == FileSessionRepository.Vector3(x: 0.5, y: 0.6, z: 0.7))
+    }
+
     @Test("missing summary values and snapshots remain absent rather than becoming zero")
     func honestMissingMetrics() async throws {
         let fixture = try Fixture()
@@ -247,6 +277,8 @@ struct FileSessionRepositoryTests {
             includeDistanceSnapshot: Bool = false,
             includeSummary: Bool = true,
             complete: Bool = true,
+            includeAccelerometerBatch: Bool = false,
+            includeDeviceMotionBatch: Bool = false,
             filename: String = "package.footysession"
         ) throws -> Package {
             let envelope = SessionEnvelopeV1(
@@ -272,6 +304,40 @@ struct FileSessionRepositoryTests {
                         timestamp: startedAt.addingTimeInterval(20),
                         meters: .init(value: 42, unit: .meters, provenance: .healthKitFinalWorkout)
                     )
+                )))
+            }
+            if includeAccelerometerBatch {
+                let baseTimestamp = startedAt.timeIntervalSinceReferenceDate + 5
+                let samples = (0..<50).map { index in
+                    AccelerometerSampleV1(
+                        timestamp: baseTimestamp + Double(index) * 0.02,
+                        acceleration: Vector3V1(
+                            x: 0.1 + Double(index) * 0.01,
+                            y: 0.2 + Double(index) * 0.01,
+                            z: 0.3 + Double(index) * 0.01
+                        )
+                    )
+                }
+                frames.append(.init(payload: .accelerometerBatch(
+                    .init(source: .batchedCoreMotion, samples: samples)
+                )))
+            }
+            if includeDeviceMotionBatch {
+                let baseTimestamp = startedAt.timeIntervalSinceReferenceDate + 6
+                let samples = (0..<50).map { index in
+                    DeviceMotionSampleV1(
+                        timestamp: baseTimestamp + Double(index) * 0.02,
+                        userAcceleration: Vector3V1(
+                            x: 0.01 * Double(index),
+                            y: 0.02 * Double(index),
+                            z: 0.03 * Double(index)
+                        ),
+                        gravity: Vector3V1(x: 0, y: 0, z: 9.81),
+                        rotationRate: Vector3V1(x: 0.5, y: 0.6, z: 0.7)
+                    )
+                }
+                frames.append(.init(payload: .deviceMotionBatch(
+                    .init(source: .batchedCoreMotion, samples: samples)
                 )))
             }
             if complete {
