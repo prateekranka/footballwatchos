@@ -80,13 +80,6 @@ private struct SessionDetailScreen: View {
     }
 }
 
-private enum RecordedMetric: String, CaseIterable, Identifiable {
-    case heartRate = "Heart rate"
-    case distance = "Distance"
-
-    var id: String { rawValue }
-}
-
 private struct SessionDetailReport: View {
     let detail: FileSessionRepository.SessionDetail
     @Binding var selectedMetric: RecordedMetric
@@ -137,6 +130,8 @@ private struct SessionDetailReport: View {
             case .heartRate:
                 SnapshotChart(
                     points: detail.heartRateSnapshots,
+                    x: \.timestamp,
+                    y: \.value,
                     metricName: "Heart rate",
                     unit: "beats per minute",
                     tint: .red
@@ -144,9 +139,41 @@ private struct SessionDetailReport: View {
             case .distance:
                 SnapshotChart(
                     points: detail.distanceSnapshots,
+                    x: \.timestamp,
+                    y: \.value,
                     metricName: "Cumulative distance",
                     unit: "meters",
                     tint: .blue
+                )
+            case .accelerationMagnitude:
+                SnapshotChart(
+                    points: MotionChartBuilder.accelerationMagnitudePoints(
+                        from: detail.accelerometerSamples,
+                        idPrefix: "acceleration"
+                    ),
+                    x: \.timestamp,
+                    y: \.value,
+                    metricName: "Acceleration magnitude",
+                    unit: "g",
+                    tint: .orange,
+                    xAxisLabel: "Seconds from first sample",
+                    emptyTitle: "No motion data was captured.",
+                    emptyDescription: "This session recorded no accelerometer samples."
+                )
+            case .rotationRate:
+                SnapshotChart(
+                    points: MotionChartBuilder.rotationRatePoints(
+                        from: detail.deviceMotionSamples,
+                        idPrefix: "rotation"
+                    ),
+                    x: \.timestamp,
+                    y: \.value,
+                    metricName: "Rotation rate",
+                    unit: "rad/s",
+                    tint: .purple,
+                    xAxisLabel: "Seconds from first sample",
+                    emptyTitle: "No motion data was captured.",
+                    emptyDescription: "This session recorded no rotation-rate samples."
                 )
             }
         }
@@ -245,33 +272,43 @@ private struct SessionDetailReport: View {
     }
 }
 
-private struct SnapshotChart: View {
-    let points: [FileSessionRepository.ChartPoint]
+/// Renders any point series whose x and y values conform to `Plottable`.
+/// Snapshot series use `FileSessionRepository.ChartPoint` (Date x-axis);
+/// motion series use `MotionChartPoint` (TimeInterval seconds, x-axis labeled
+/// "Seconds from first sample").
+private struct SnapshotChart<Point: Identifiable, X: Plottable, Y: Plottable>: View {
+    let points: [Point]
+    let x: KeyPath<Point, X>
+    let y: KeyPath<Point, Y>
     let metricName: String
     let unit: String
     let tint: Color
+    var xAxisLabel: String = "Recorded time"
+    var emptyTitle: String?
+    var emptyDescription: String?
 
     var body: some View {
         if points.isEmpty {
             ContentUnavailableView(
-                "No \(metricName.lowercased()) snapshots",
+                emptyTitle ?? "No \(metricName.lowercased()) snapshots",
                 systemImage: "chart.line.downtrend.xyaxis",
-                description: Text("This session did not record usable \(metricName.lowercased()) snapshots.")
+                description: Text(emptyDescription ?? "This session did not record usable \(metricName.lowercased()) snapshots.")
             )
             .frame(height: 220)
         } else {
             Chart(points) { point in
                 LineMark(
-                    x: .value("Recorded time", point.timestamp),
-                    y: .value(metricName, point.value)
+                    x: .value(xAxisLabel, point[keyPath: x]),
+                    y: .value(metricName, point[keyPath: y])
                 )
                 .foregroundStyle(tint)
                 PointMark(
-                    x: .value("Recorded time", point.timestamp),
-                    y: .value(metricName, point.value)
+                    x: .value(xAxisLabel, point[keyPath: x]),
+                    y: .value(metricName, point[keyPath: y])
                 )
                 .foregroundStyle(tint)
             }
+            .chartXAxisLabel(xAxisLabel)
             .chartYAxisLabel(unit)
             .frame(height: 240)
             .accessibilityLabel("\(metricName) chart in \(unit)")
@@ -361,7 +398,9 @@ private func authorizationText(_ reason: HealthKitAuthorizationIssueV1) -> Strin
     }
 }
 
-private func captureSourceText(_ source: MotionCaptureSourceV1) -> String {
+/// Human-readable label for every `MotionCaptureSourceV1` case. The switch is
+/// exhaustive over the shared enum, so adding a case forces a label here.
+func captureSourceText(_ source: MotionCaptureSourceV1) -> String {
     switch source {
     case .batchedCoreMotion: "Batched Core Motion"
     case .foregroundFallback: "Foreground Core Motion fallback"
