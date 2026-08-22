@@ -49,11 +49,6 @@ struct MotionCaptureDrainResult: Sendable, Equatable {
     let storageFailure: String?
 }
 
-enum MotionCaptureRuntimeMode: Sendable, Equatable {
-    case fullSensors
-    case healthKitOnly
-}
-
 private enum MotionPersistenceEvent: Sendable {
     case accelerometer(AccelerometerBatchV1)
     case deviceMotion(DeviceMotionBatchV1)
@@ -208,8 +203,6 @@ private final class FallbackErrorGate: @unchecked Sendable {
 final class MotionCaptureController: ObservableObject {
     @Published private(set) var snapshot: MotionCaptureSnapshot = .idle
 
-    private let runtimeMode: MotionCaptureRuntimeMode
-
     private let fallbackMotionManager = CMMotionManager()
     private let fallbackQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -231,21 +224,9 @@ final class MotionCaptureController: ObservableObject {
     private var fallbackAccelerometerErrorGate = FallbackErrorGate()
     private var fallbackDeviceMotionErrorGate = FallbackErrorGate()
 
-    init(runtimeMode: MotionCaptureRuntimeMode = .fullSensors) {
-        self.runtimeMode = runtimeMode
-    }
+    init() {}
 
     func makeCapturePlan() -> MotionCapturePlan {
-        if runtimeMode == .healthKitOnly {
-            return MotionCapturePlan(
-                source: .unavailable(reason: .serviceUnavailable),
-                accelerometerAvailability: .unavailable(reason: .serviceUnavailable),
-                deviceMotionAvailability: .unavailable(reason: .serviceUnavailable),
-                sourceLabel: "HealthKit-only safe mode",
-                sourceDetail: "Wrist motion is paused while start-crash diagnostics run. Heart rate and GPS distance still record."
-            )
-        }
-
         if CMBatchedSensorManager.isAccelerometerSupported,
            CMBatchedSensorManager.isDeviceMotionSupported {
             return MotionCapturePlan(

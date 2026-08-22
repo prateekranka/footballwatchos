@@ -36,7 +36,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     @Published private(set) var startedAt: Date?
     @Published private(set) var recoveryNotice: String?
 
-    let motionCapture = MotionCaptureController(runtimeMode: .fullSensors)
+    let motionCapture = MotionCaptureController()
     let syncCoordinator: WatchSyncCoordinator
     private let diagnosticJournal: WatchDiagnosticJournal?
 
