@@ -53,6 +53,101 @@ struct FootySessionPackageV1Tests {
         #expect(read.wholeFileDigest == digest)
     }
 
+    @Test("sub-second date components survive the write/read round trip")
+    func dateFidelitySurvivesWriteReadRoundTrip() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // Every date below carries sub-second components on purpose. Binary
+        // plists store real date objects, and this test pins that exactness.
+        let startedAt = fixtureDate.addingTimeInterval(0.123456)
+        let heartRateAt = fixtureDate.addingTimeInterval(61.000421)
+        let distanceAt = fixtureDate.addingTimeInterval(91.000421)
+        let endedAt = fixtureDate.addingTimeInterval(130.000007)
+
+        let envelope = SessionEnvelopeV1(
+            sessionID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            createdAt: fixtureDate,
+            startedAt: startedAt,
+            captureSource: .batchedCoreMotion,
+            initialAccelerometerAvailability: .available,
+            initialDeviceMotionAvailability: .available
+        )
+        let heartRate = HeartRateSnapshotV1(
+            timestamp: heartRateAt,
+            beatsPerMinute: SessionMetricV1(
+                value: 142,
+                unit: .beatsPerMinute,
+                provenance: .healthKitLive,
+                measuredAt: heartRateAt
+            )
+        )
+        let distance = DistanceSnapshotV1(
+            timestamp: distanceAt,
+            meters: SessionMetricV1(
+                value: 123.4,
+                unit: .meters,
+                provenance: .healthKitLive,
+                measuredAt: distanceAt
+            )
+        )
+        let completion = SessionCompletionV1(
+            endedAt: endedAt,
+            lifecycle: .completed,
+            summary: SessionSummaryMetricsV1(
+                duration: SessionMetricV1(
+                    value: 130,
+                    unit: .seconds,
+                    provenance: .healthKitFinalWorkout,
+                    measuredAt: endedAt
+                ),
+                distance: SessionMetricV1(
+                    value: 123.4,
+                    unit: .meters,
+                    provenance: .healthKitFinalWorkout,
+                    measuredAt: endedAt.addingTimeInterval(0.000001)
+                )
+            ),
+            healthKitSaveOutcome: .saved(workoutUUID: UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        )
+        let frames = [
+            FootySessionFrameV1(payload: .envelope(envelope)),
+            FootySessionFrameV1(payload: .heartRateSnapshot(heartRate)),
+            FootySessionFrameV1(payload: .distanceSnapshot(distance)),
+            FootySessionFrameV1(payload: .completion(completion)),
+        ]
+        let url = directory.appendingPathComponent("fidelity.footysession")
+
+        try FootySessionPackageV1.writePackage(frames: frames, to: url)
+        let read = try FootySessionPackageV1.read(from: url)
+
+        guard case let .envelope(readEnvelope) = read.frames[0].payload,
+              case let .heartRateSnapshot(readHeartRate) = read.frames[1].payload,
+              case let .distanceSnapshot(readDistance) = read.frames[2].payload,
+              case let .completion(readCompletion) = read.frames[3].payload
+        else {
+            Issue.record("Frames decoded with unexpected payload kinds")
+            return
+        }
+
+        #expect(read.status == .complete)
+        #expect(readEnvelope.createdAt == fixtureDate)
+        #expect(readEnvelope.startedAt == startedAt)
+        #expect(readHeartRate.timestamp == heartRateAt)
+        #expect(readHeartRate.beatsPerMinute.measuredAt == heartRateAt)
+        #expect(readDistance.timestamp == distanceAt)
+        #expect(readDistance.meters.measuredAt == distanceAt)
+        #expect(readCompletion.endedAt == endedAt)
+        #expect(readCompletion.summary?.duration?.measuredAt == endedAt)
+        #expect(readCompletion.summary?.distance?.measuredAt == endedAt.addingTimeInterval(0.000001))
+
+        // The first frame region (after the 16-byte header) must contain the
+        // binary plist magic, proving dates ride as plist date objects rather
+        // than strings or raw time intervals.
+        let fileData = try Data(contentsOf: url)
+        #expect(fileData.range(of: Data("bplist00".utf8), in: 16..<fileData.count) != nil)
+    }
+
     @Test("a torn tail recovers only the verified prefix")
     func tornTailValidPrefixRecovery() throws {
         let directory = try makeTemporaryDirectory()
