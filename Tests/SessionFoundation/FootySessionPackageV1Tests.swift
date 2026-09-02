@@ -53,6 +53,40 @@ struct FootySessionPackageV1Tests {
         #expect(read.wholeFileDigest == digest)
     }
 
+    @Test("the streaming scan yields verified frames without retaining the package")
+    func streamingScanYieldsVerifiedFrames() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let frames = [
+            FootySessionFrameV1(payload: .envelope(fixtureEnvelope())),
+            FootySessionFrameV1(payload: .heartRateSnapshot(
+                HeartRateSnapshotV1(
+                    timestamp: fixtureDate.addingTimeInterval(10),
+                    beatsPerMinute: SessionMetricV1(
+                        value: 160,
+                        unit: .beatsPerMinute,
+                        provenance: .healthKitLive
+                    )
+                )
+            )),
+            FootySessionFrameV1(payload: .completion(interruptedCompletion()))
+        ]
+        let url = directory.appendingPathComponent("streaming.footysession")
+        try FootySessionPackageV1.writePackage(frames: frames, to: url)
+
+        var streamed: [FootySessionFrameV1] = []
+        let scan = try FootySessionPackageV1.scanStructure(of: url) { frame in
+            streamed.append(frame)
+        }
+
+        #expect(scan.status == .complete)
+        #expect(scan.frameCount == frames.count)
+        #expect(streamed == frames)
+        let digest = try FootySessionPackageV1.digest(of: url)
+        #expect(scan.wholeFileDigest == digest)
+    }
+
     @Test("sub-second date components survive the write/read round trip")
     func dateFidelitySurvivesWriteReadRoundTrip() throws {
         let directory = try makeTemporaryDirectory()

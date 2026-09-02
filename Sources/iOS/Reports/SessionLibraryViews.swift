@@ -6,7 +6,11 @@ struct SessionLibraryView: View {
 
     var body: some View {
         Group {
-            if model.sessions.isEmpty {
+            if model.isLoading && model.sessions.isEmpty {
+                ProgressView(model.loadingMessage)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityElement(children: .combine)
+            } else if model.sessions.isEmpty {
                 ContentUnavailableView {
                     Label("No sessions received yet", systemImage: "tray")
                 } description: {
@@ -53,7 +57,9 @@ private struct SessionDetailScreen: View {
 
     var body: some View {
         Group {
-            if let detail = model.selectedDetail, detail.record.sessionID == sessionID {
+            if model.isLoadingDetail(for: sessionID) {
+                ProgressView(model.loadingMessage)
+            } else if let detail = model.selectedDetail, detail.record.sessionID == sessionID {
                 SessionDetailReport(
                     detail: detail,
                     selectedMetric: $selectedMetric,
@@ -63,7 +69,11 @@ private struct SessionDetailScreen: View {
                     showsDeleteConfirmation: $showsDeleteConfirmation
                 )
             } else if model.isLoading {
-                ProgressView("Loading session")
+                ProgressView(model.loadingMessage)
+            } else if model.message == nil {
+                // The navigation task is scheduled after the first body pass;
+                // keep that gap truthful instead of flashing "unavailable".
+                ProgressView("Loading session…")
             } else {
                 ContentUnavailableView {
                     Label("Session unavailable", systemImage: "exclamationmark.triangle")
@@ -81,6 +91,7 @@ private struct SessionDetailScreen: View {
 }
 
 private struct SessionDetailReport: View {
+    @EnvironmentObject private var model: PhoneSessionLibraryModel
     let detail: FileSessionRepository.SessionDetail
     @Binding var selectedMetric: RecordedMetric
     let exportURL: URL?
@@ -241,7 +252,10 @@ private struct SessionDetailReport: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Package")
                 .font(.title3.bold())
-            if let exportURL {
+            if model.isPreparingPackage(for: detail.record.sessionID)
+                || model.isDeletingIPhoneCopy(for: detail.record.sessionID) {
+                ProgressView(model.loadingMessage)
+            } else if let exportURL {
                 ShareLink(item: exportURL) {
                     Label("Share verified package", systemImage: "square.and.arrow.up")
                 }

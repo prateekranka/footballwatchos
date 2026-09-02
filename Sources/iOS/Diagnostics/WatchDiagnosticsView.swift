@@ -5,7 +5,11 @@ struct WatchDiagnosticsView: View {
 
     var body: some View {
         Group {
-            if model.watchDiagnostics.isEmpty {
+            if model.isLoading && model.watchDiagnostics.isEmpty {
+                ProgressView(model.loadingMessage)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityElement(children: .combine)
+            } else if model.watchDiagnostics.isEmpty {
                 ContentUnavailableView {
                     Label("No Watch diagnostics", systemImage: "checkmark.shield")
                 } description: {

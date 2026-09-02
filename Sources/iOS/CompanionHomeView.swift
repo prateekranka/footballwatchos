@@ -24,7 +24,14 @@ struct CompanionHomeView: View {
                     }
                 }
                 .overlay(alignment: .bottom) {
-                    if let message = model.message {
+                    if model.isLoading {
+                        ProgressView(model.loadingMessage)
+                            .font(.footnote)
+                            .padding(12)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding()
+                            .accessibilityElement(children: .combine)
+                    } else if let message = model.message {
                         Text(message)
                             .font(.footnote)
                             .padding(12)

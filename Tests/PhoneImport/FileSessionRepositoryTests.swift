@@ -242,6 +242,39 @@ struct FileSessionRepositoryTests {
         #expect(detail.record.completion.summary == nil)
     }
 
+    @Test("a corrupt detail cache is invalidated and rebuilt from the verified package")
+    func corruptDetailCacheFallsBackToPackage() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let repository = try fixture.repository()
+        let package = try fixture.writePackage(
+            sessionID: fixture.firstSessionID,
+            startedAt: fixture.start,
+            includeHeartRateSnapshot: true,
+            includeDistanceSnapshot: true,
+            includeAccelerometerBatch: true,
+            includeDeviceMotionBatch: true
+        )
+        _ = await repository.importStaged(deliveryID: try fixture.stage(package))
+
+        let firstDetail = try await repository.detail(for: fixture.firstSessionID)
+        let cacheDirectory = await repository.cacheDirectory
+        let cacheURL = cacheDirectory.appendingPathComponent(
+            "\(fixture.firstSessionID.uuidString.lowercased()).json",
+            isDirectory: false
+        )
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path))
+
+        var corrupt = try Data(contentsOf: cacheURL)
+        corrupt[corrupt.index(corrupt.startIndex, offsetBy: corrupt.count / 2)] ^= 0xFF
+        try corrupt.write(to: cacheURL, options: .atomic)
+
+        let rebuiltDetail = try await repository.detail(for: fixture.firstSessionID)
+        #expect(rebuiltDetail == firstDetail)
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path))
+        #expect(try Data(contentsOf: cacheURL) != corrupt)
+    }
+
     private struct Fixture {
         struct Package {
             let url: URL

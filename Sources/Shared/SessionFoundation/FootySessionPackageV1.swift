@@ -126,6 +126,31 @@ public struct SessionPackageReadResultV1: Sendable, Equatable {
     }
 }
 
+/// The bounded-memory result of a structural scan over a package file. Unlike
+/// `SessionPackageReadResultV1` it carries no sensor frames — only the
+/// terminal payloads the Watch needs to make recovery/transfer decisions.
+public struct SessionPackageScanV1: Sendable, Equatable {
+    public let envelope: SessionEnvelopeV1?
+    public let completion: SessionCompletionV1?
+    public let status: SessionPackageReadStatusV1
+    public let frameCount: Int
+    public let wholeFileDigest: SessionDigestV1
+
+    public init(
+        envelope: SessionEnvelopeV1?,
+        completion: SessionCompletionV1?,
+        status: SessionPackageReadStatusV1,
+        frameCount: Int,
+        wholeFileDigest: SessionDigestV1
+    ) {
+        self.envelope = envelope
+        self.completion = completion
+        self.status = status
+        self.frameCount = frameCount
+        self.wholeFileDigest = wholeFileDigest
+    }
+}
+
 public enum SessionPackageError: Error, Sendable, Equatable {
     case invalidMagic
     case unsupportedVersion(UInt32)
@@ -302,6 +327,100 @@ public enum FootySessionPackageV1 {
             frames.append(frame)
             validPrefixByteCount += UInt64(4 + Int(declaredLength) + frameDigestByteCount)
         }
+    }
+
+    /// Performs the structural checks of `read(from:)` without retaining the
+    /// package's frames. The optional callback receives each verified frame
+    /// before the next frame is read, so callers can keep only a bounded
+    /// projection of a large session.
+    static func scanStructure(
+        of url: URL,
+        limits: SessionPackageReaderLimitsV1 = .default,
+        onFrame: ((FootySessionFrameV1) throws -> Void)? = nil
+    ) throws -> SessionPackageScanV1 {
+        guard limits.maximumFrameBytes > 0, limits.maximumFrameCount > 0 else {
+            throw SessionPackageError.invalidSynchronizationPolicy
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var wholeFileHasher = SHA256()
+        let header = try readUpTo(headerByteCount, from: handle, hasher: &wholeFileHasher)
+        guard header.count == headerByteCount else {
+            throw SessionPackageError.truncatedHeader
+        }
+        try validateHeader(header)
+
+        var envelope: SessionEnvelopeV1?
+        var completion: SessionCompletionV1?
+        var frameCount = 0
+        var sawCompletion = false
+
+        while true {
+            let lengthData = try readUpTo(4, from: handle, hasher: &wholeFileHasher)
+            if lengthData.isEmpty {
+                return SessionPackageScanV1(
+                    envelope: envelope,
+                    completion: completion,
+                    status: sawCompletion ? .complete : .incomplete,
+                    frameCount: frameCount,
+                    wholeFileDigest: SessionDigestV1(bytes: Data(wholeFileHasher.finalize()))
+                )
+            }
+            guard lengthData.count == 4 else { break }
+
+            let declaredLength = lengthData.uint32BigEndian(at: 0)
+            guard declaredLength > 0 else {
+                throw SessionPackageError.invalidFrameLength(declaredLength)
+            }
+            guard UInt64(declaredLength) <= UInt64(limits.maximumFrameBytes) else {
+                throw SessionPackageError.frameTooLarge(
+                    declared: declaredLength,
+                    limit: limits.maximumFrameBytes
+                )
+            }
+            guard frameCount < limits.maximumFrameCount else {
+                throw SessionPackageError.tooManyFrames(limit: limits.maximumFrameCount)
+            }
+
+            let frameData = try readUpTo(Int(declaredLength), from: handle, hasher: &wholeFileHasher)
+            guard frameData.count == Int(declaredLength) else { break }
+            let integrity = try readUpTo(frameDigestByteCount, from: handle, hasher: &wholeFileHasher)
+            guard integrity.count == frameDigestByteCount else { break }
+            guard integrity == Data(SHA256.hash(data: frameData)) else {
+                throw SessionPackageError.corruptFrameIntegrity(index: frameCount)
+            }
+
+            let frame: FootySessionFrameV1
+            do {
+                frame = try PropertyListDecoder().decode(FootySessionFrameV1.self, from: frameData)
+            } catch {
+                throw SessionPackageError.corruptFrame(index: frameCount)
+            }
+            try validateFrameSequence(frame, at: frameCount, sawCompletion: sawCompletion)
+            if let onFrame {
+                try onFrame(frame)
+            }
+            switch frame.payload {
+            case let .envelope(value):
+                envelope = value
+            case let .completion(value):
+                completion = value
+                sawCompletion = true
+            default:
+                break
+            }
+            frameCount += 1
+        }
+
+        return SessionPackageScanV1(
+            envelope: envelope,
+            completion: completion,
+            status: .tornTail,
+            frameCount: frameCount,
+            wholeFileDigest: SessionDigestV1(bytes: Data(wholeFileHasher.finalize()))
+        )
     }
 
     static func writeHeader(to handle: FileHandle) throws {

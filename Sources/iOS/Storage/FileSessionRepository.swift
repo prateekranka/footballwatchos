@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A durable, local-only iPhone library of packages received from the Watch.
@@ -58,7 +59,7 @@ public actor FileSessionRepository {
         }
     }
 
-    public struct ChartPoint: Identifiable, Sendable, Equatable {
+    public struct ChartPoint: Identifiable, Sendable, Equatable, Codable {
         public let id: String
         public let timestamp: Date
         public let value: Double
@@ -71,7 +72,7 @@ public actor FileSessionRepository {
     }
 
     /// A three-component vector in the same axes Core Motion reports.
-    public struct Vector3: Sendable, Equatable {
+    public struct Vector3: Sendable, Equatable, Codable {
         public let x: Double
         public let y: Double
         public let z: Double
@@ -86,7 +87,7 @@ public actor FileSessionRepository {
     /// One raw accelerometer reading. `timestamp` is the CoreMotion epoch
     /// (`TimeInterval` since device boot); rebasing to session-relative time is
     /// a rendering concern and deliberately not performed here.
-    public struct MotionSamplePoint: Sendable, Equatable {
+    public struct MotionSamplePoint: Sendable, Equatable, Codable {
         public let timestamp: TimeInterval
         public let x: Double
         public let y: Double
@@ -102,7 +103,7 @@ public actor FileSessionRepository {
 
     /// One raw device-motion reading with its three vectors. `timestamp` is the
     /// CoreMotion epoch; no conversion is performed here.
-    public struct DeviceMotionSamplePoint: Sendable, Equatable {
+    public struct DeviceMotionSamplePoint: Sendable, Equatable, Codable {
         public let timestamp: TimeInterval
         public let userAcceleration: Vector3
         public let gravity: Vector3
@@ -192,12 +193,71 @@ public actor FileSessionRepository {
         let handledAt: Date
     }
 
+    private struct DetailCachePayloadV1: Codable, Sendable {
+        let sessionID: UUID
+        let packageDigest: SessionDigestV1
+        let byteCount: UInt64
+        let record: SessionRecord
+        let heartRateSnapshots: [ChartPoint]
+        let distanceSnapshots: [ChartPoint]
+        let diagnostics: [CaptureDiagnosticsV1]
+        let accelerometerSamples: [MotionSamplePoint]
+        let deviceMotionSamples: [DeviceMotionSamplePoint]
+    }
+
+    private struct DetailCacheV1: Codable, Sendable {
+        let schemaVersion: Int
+        let payload: DetailCachePayloadV1
+        let payloadDigest: SessionDigestV1
+    }
+
+    private enum DetailCacheError: Error, Sendable {
+        case invalid
+    }
+
+    private struct BoundedCollector<Element> {
+        let limit: Int
+        var values: [Element] = []
+
+        init(limit: Int) {
+            self.limit = limit
+            values.reserveCapacity(limit)
+        }
+
+        mutating func append(_ value: Element) {
+            guard limit > 0 else { return }
+            if values.count >= limit {
+                // The total stream length is unknown until EOF. Halving the
+                // retained prefix when full keeps memory bounded and leaves
+                // room for the newest sample, which preserves the time span.
+                values = values.enumerated().compactMap { index, value in
+                    index.isMultiple(of: 2) ? value : nil
+                }
+            }
+            values.append(value)
+        }
+
+        mutating func append(contentsOf newValues: [Element]) {
+            for value in newValues {
+                append(value)
+            }
+        }
+    }
+
+    private static let detailCacheSchemaVersion = 1
+    private static let maximumCachedSnapshotPoints = 20_000
+    private static let maximumCachedMotionSamples = 2_000
+    private static let maximumCachedDiagnostics = 64
+    private static let maximumDetailCacheBytes = 8 * 1024 * 1024
+    private static let maximumDetailCacheEntries = 8
+
     private let fileManager: FileManager
     public let rootDirectory: URL
     public let incomingDirectory: URL
     public let packagesDirectory: URL
     public let quarantineDirectory: URL
     public let receiptsDirectory: URL
+    public let cacheDirectory: URL
 
     private let indexURL: URL
     private let tombstonesURL: URL
@@ -215,12 +275,22 @@ public actor FileSessionRepository {
         self.packagesDirectory = rootDirectory.appendingPathComponent("Packages", isDirectory: true)
         self.quarantineDirectory = rootDirectory.appendingPathComponent("Quarantine", isDirectory: true)
         self.receiptsDirectory = rootDirectory.appendingPathComponent("Receipts", isDirectory: true)
+        self.cacheDirectory = rootDirectory
+            .appendingPathComponent("Cache", isDirectory: true)
+            .appendingPathComponent("SessionDetails", isDirectory: true)
         self.indexURL = rootDirectory.appendingPathComponent("index.json", isDirectory: false)
         self.tombstonesURL = rootDirectory.appendingPathComponent("tombstones.json", isDirectory: false)
         self.index = Index(schemaVersion: 1, entries: [])
         self.tombstones = TombstoneStore(schemaVersion: 1, entries: [])
 
-        for directory in [rootDirectory, incomingDirectory, packagesDirectory, quarantineDirectory, receiptsDirectory] {
+        for directory in [
+            rootDirectory,
+            incomingDirectory,
+            packagesDirectory,
+            quarantineDirectory,
+            receiptsDirectory,
+            cacheDirectory
+        ] {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         try? (rootDirectory as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
@@ -292,9 +362,11 @@ public actor FileSessionRepository {
     /// retained incoming staging directories. Call once as the application
     /// starts, before presenting the library as current.
     public func reconcileOnStartup() throws {
+        try Task.checkCancellation()
         tombstones = try loadTombstones()
         try rebuildIndexFromPackages()
         try reconcileIncomingStaging()
+        try Task.checkCancellation()
     }
 
     public func detail(for sessionID: UUID) throws -> SessionDetail {
@@ -303,82 +375,144 @@ public actor FileSessionRepository {
         }
 
         let packageURL = packageURL(for: record)
-        let inspected = try SessionTransferCodecV1.inspectCompletePackage(at: packageURL)
-        guard inspected.transferEnvelope.packageDigest == record.packageDigest,
-              inspected.transferEnvelope.byteCount == record.byteCount else {
-            throw RepositoryError.exportIntegrityFailure
-        }
+        let cached = loadCachedDetail(for: record)
+        try Task.checkCancellation()
 
-        let read = try FootySessionPackageV1.read(from: packageURL)
-        var heartRateSnapshots: [ChartPoint] = []
-        var distanceSnapshots: [ChartPoint] = []
-        var diagnostics: [CaptureDiagnosticsV1] = []
-        var accelerometerSamples: [MotionSamplePoint] = []
-        var deviceMotionSamples: [DeviceMotionSamplePoint] = []
+        let values = try packageURL.resourceValues(forKeys: [.fileSizeKey])
+        let onFrame: ((FootySessionFrameV1) throws -> Void)?
+        var heartRateSnapshots = BoundedCollector<ChartPoint>(
+            limit: Self.maximumCachedSnapshotPoints
+        )
+        var distanceSnapshots = BoundedCollector<ChartPoint>(
+            limit: Self.maximumCachedSnapshotPoints
+        )
+        var diagnostics = BoundedCollector<CaptureDiagnosticsV1>(
+            limit: Self.maximumCachedDiagnostics
+        )
+        var accelerometerSamples = BoundedCollector<MotionSamplePoint>(
+            limit: Self.maximumCachedMotionSamples
+        )
+        var deviceMotionSamples = BoundedCollector<DeviceMotionSamplePoint>(
+            limit: Self.maximumCachedMotionSamples
+        )
+        var frameOffset = 0
 
-        for (offset, frame) in read.frames.enumerated() {
-            switch frame.payload {
-            case let .heartRateSnapshot(snapshot):
-                heartRateSnapshots.append(
-                    ChartPoint(
-                        id: "heart-rate-\(offset)-\(snapshot.timestamp.timeIntervalSinceReferenceDate)",
-                        timestamp: snapshot.timestamp,
-                        value: snapshot.beatsPerMinute.value
-                    )
-                )
-            case let .distanceSnapshot(snapshot):
-                distanceSnapshots.append(
-                    ChartPoint(
-                        id: "distance-\(offset)-\(snapshot.timestamp.timeIntervalSinceReferenceDate)",
-                        timestamp: snapshot.timestamp,
-                        value: snapshot.meters.value
-                    )
-                )
-            case let .captureDiagnostics(diagnostic):
-                diagnostics.append(diagnostic)
-            case let .accelerometerBatch(batch):
-                accelerometerSamples.append(contentsOf: batch.samples.map { sample in
-                    MotionSamplePoint(
-                        timestamp: sample.timestamp,
-                        x: sample.acceleration.x,
-                        y: sample.acceleration.y,
-                        z: sample.acceleration.z
-                    )
-                })
-            case let .deviceMotionBatch(batch):
-                deviceMotionSamples.append(contentsOf: batch.samples.map { sample in
-                    DeviceMotionSamplePoint(
-                        timestamp: sample.timestamp,
-                        userAcceleration: Vector3(
-                            x: sample.userAcceleration.x,
-                            y: sample.userAcceleration.y,
-                            z: sample.userAcceleration.z
-                        ),
-                        gravity: Vector3(
-                            x: sample.gravity.x,
-                            y: sample.gravity.y,
-                            z: sample.gravity.z
-                        ),
-                        rotationRate: Vector3(
-                            x: sample.rotationRate.x,
-                            y: sample.rotationRate.y,
-                            z: sample.rotationRate.z
+        if cached == nil {
+            onFrame = { frame in
+                try Task.checkCancellation()
+                let offset = frameOffset
+                frameOffset += 1
+                switch frame.payload {
+                case let .heartRateSnapshot(snapshot):
+                    heartRateSnapshots.append(
+                        ChartPoint(
+                            id: "heart-rate-\(offset)-\(snapshot.timestamp.timeIntervalSinceReferenceDate)",
+                            timestamp: snapshot.timestamp,
+                            value: snapshot.beatsPerMinute.value
                         )
                     )
-                })
-            default:
-                break
+                case let .distanceSnapshot(snapshot):
+                    distanceSnapshots.append(
+                        ChartPoint(
+                            id: "distance-\(offset)-\(snapshot.timestamp.timeIntervalSinceReferenceDate)",
+                            timestamp: snapshot.timestamp,
+                            value: snapshot.meters.value
+                        )
+                    )
+                case let .captureDiagnostics(diagnostic):
+                    diagnostics.append(diagnostic)
+                case let .accelerometerBatch(batch):
+                    for sample in batch.samples {
+                        accelerometerSamples.append(
+                            MotionSamplePoint(
+                                timestamp: sample.timestamp,
+                                x: sample.acceleration.x,
+                                y: sample.acceleration.y,
+                                z: sample.acceleration.z
+                            )
+                        )
+                    }
+                case let .deviceMotionBatch(batch):
+                    for sample in batch.samples {
+                        deviceMotionSamples.append(
+                            DeviceMotionSamplePoint(
+                                timestamp: sample.timestamp,
+                                userAcceleration: Vector3(
+                                    x: sample.userAcceleration.x,
+                                    y: sample.userAcceleration.y,
+                                    z: sample.userAcceleration.z
+                                ),
+                                gravity: Vector3(
+                                    x: sample.gravity.x,
+                                    y: sample.gravity.y,
+                                    z: sample.gravity.z
+                                ),
+                                rotationRate: Vector3(
+                                    x: sample.rotationRate.x,
+                                    y: sample.rotationRate.y,
+                                    z: sample.rotationRate.z
+                                )
+                            )
+                        )
+                    }
+                default:
+                    break
+                }
             }
+        } else {
+            onFrame = nil
         }
 
-        return SessionDetail(
-            record: record,
-            heartRateSnapshots: heartRateSnapshots,
-            distanceSnapshots: distanceSnapshots,
-            diagnostics: diagnostics,
-            accelerometerSamples: accelerometerSamples,
-            deviceMotionSamples: deviceMotionSamples
+        let scan = try FootySessionPackageV1.scanStructure(
+            of: packageURL,
+            onFrame: onFrame
         )
+        guard scan.status == .complete,
+              let sessionEnvelope = scan.envelope,
+              let completion = scan.completion,
+              scan.wholeFileDigest == record.packageDigest,
+              UInt64(values.fileSize ?? 0) == record.byteCount,
+              sessionEnvelope == record.sessionEnvelope,
+              completion == record.completion else {
+            try? fileManager.removeItem(at: detailCacheURL(for: sessionID))
+            throw RepositoryError.exportIntegrityFailure
+        }
+        do {
+            try validateDurableReceipt(for: record)
+        } catch {
+            try? fileManager.removeItem(at: detailCacheURL(for: sessionID))
+            throw error
+        }
+        try Task.checkCancellation()
+
+        if let cached {
+            return cached
+        }
+
+        guard index.entries.contains(record) else {
+            throw RepositoryError.sessionNotFound
+        }
+
+        let detail = SessionDetail(
+            record: record,
+            heartRateSnapshots: heartRateSnapshots.values,
+            distanceSnapshots: distanceSnapshots.values,
+            diagnostics: diagnostics.values,
+            accelerometerSamples: accelerometerSamples.values,
+            deviceMotionSamples: deviceMotionSamples.values
+        )
+
+        do {
+            try Task.checkCancellation()
+            try saveDetailCache(detail, for: record)
+        } catch {
+            // The cache is an optimization. A failed cache write must not hide
+            // a verified package, but cancellation must still reach the caller.
+            if error is CancellationError {
+                throw error
+            }
+        }
+        return detail
     }
 
     /// Returns the stored package URL only after recalculating its digest. A
@@ -393,6 +527,7 @@ public actor FileSessionRepository {
         guard digest == record.packageDigest else {
             throw RepositoryError.exportIntegrityFailure
         }
+        try validateDurableReceipt(for: record)
         return url
     }
 
@@ -428,6 +563,10 @@ public actor FileSessionRepository {
         let metadataURL = storedMetadataURL(for: packageURL)
         if fileManager.fileExists(atPath: metadataURL.path) {
             try fileManager.removeItem(at: metadataURL)
+        }
+        let cacheURL = detailCacheURL(for: record.sessionID)
+        if fileManager.fileExists(atPath: cacheURL.path) {
+            try fileManager.removeItem(at: cacheURL)
         }
         let receiptDirectory = receiptsDirectory.appendingPathComponent(
             record.sessionID.uuidString.lowercased(),
@@ -571,6 +710,11 @@ public actor FileSessionRepository {
                 guard let receipt = try? SessionTransferCodecV1.decodeReceipt(payload) else {
                     return false
                 }
+                guard receipt.destination == "iPhone",
+                      let record = index.entries.first(where: { $0.sessionID == receipt.sessionID }),
+                      record.packageDigest == receipt.packageDigest else {
+                    return false
+                }
                 return !tombstones.entries.contains {
                     $0.sessionID == receipt.sessionID
                         && $0.packageDigest == receipt.packageDigest
@@ -598,6 +742,7 @@ public actor FileSessionRepository {
         var recordsBySessionID: [UUID: SessionRecord] = [:]
 
         for sessionDirectory in sessionDirectories.sorted(by: { $0.path < $1.path }) {
+            try Task.checkCancellation()
             let values = try sessionDirectory.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
             let packageURLs = try fileManager.contentsOfDirectory(
@@ -608,6 +753,7 @@ public actor FileSessionRepository {
             for candidateURL in packageURLs
                 .filter({ $0.pathExtension == FootySessionPackageV1.fileExtension })
                 .sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                try Task.checkCancellation()
                 do {
                     let inspected = try SessionTransferCodecV1.inspectCompletePackage(at: candidateURL)
                     if tombstones.entries.contains(where: {
@@ -673,6 +819,7 @@ public actor FileSessionRepository {
             options: [.skipsHiddenFiles]
         )
         for deliveryDirectory in deliveryDirectories.sorted(by: { $0.path < $1.path }) {
+            try Task.checkCancellation()
             let values = try deliveryDirectory.resourceValues(forKeys: [.isDirectoryKey])
             guard values.isDirectory == true else { continue }
             _ = importStaged(deliveryID: deliveryDirectory.lastPathComponent)
@@ -710,12 +857,175 @@ public actor FileSessionRepository {
             .appendingPathExtension("plist")
     }
 
+    private func detailCacheURL(for sessionID: UUID) -> URL {
+        cacheDirectory.appendingPathComponent(
+            "\(sessionID.uuidString.lowercased()).json",
+            isDirectory: false
+        )
+    }
+
+    /// Reads only a bounded, integrity-checked projection of a detail. The
+    /// package and durable receipt are verified by `detail(for:)` before a
+    /// cached value is returned; the cache digest additionally detects
+    /// cache-file tampering.
+    private func loadCachedDetail(for record: SessionRecord) -> SessionDetail? {
+        let url = detailCacheURL(for: record.sessionID)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            guard let fileSize = values.fileSize,
+                  fileSize <= Self.maximumDetailCacheBytes else {
+                throw DetailCacheError.invalid
+            }
+            let data = try Data(contentsOf: url)
+            guard data.count <= Self.maximumDetailCacheBytes else {
+                throw DetailCacheError.invalid
+            }
+            let cache = try JSONDecoder().decode(DetailCacheV1.self, from: data)
+            guard cache.schemaVersion == Self.detailCacheSchemaVersion else {
+                throw DetailCacheError.invalid
+            }
+            let payloadData = try Self.encodeDetailCachePayload(cache.payload)
+            guard cache.payloadDigest == Self.detailCacheDigest(payloadData) else {
+                throw DetailCacheError.invalid
+            }
+            try validateDetailCachePayload(cache.payload, matches: record)
+            return SessionDetail(
+                record: cache.payload.record,
+                heartRateSnapshots: cache.payload.heartRateSnapshots,
+                distanceSnapshots: cache.payload.distanceSnapshots,
+                diagnostics: cache.payload.diagnostics,
+                accelerometerSamples: cache.payload.accelerometerSamples,
+                deviceMotionSamples: cache.payload.deviceMotionSamples
+            )
+        } catch {
+            // A stale, corrupt, oversized, or future-format cache is never a
+            // source of truth. It is safe to remove because the package remains
+            // durable and the next detail request rebuilds this projection.
+            try? fileManager.removeItem(at: url)
+            return nil
+        }
+    }
+
+    private func saveDetailCache(
+        _ detail: SessionDetail,
+        for record: SessionRecord
+    ) throws {
+        let payload = DetailCachePayloadV1(
+            sessionID: record.sessionID,
+            packageDigest: record.packageDigest,
+            byteCount: record.byteCount,
+            record: record,
+            heartRateSnapshots: detail.heartRateSnapshots,
+            distanceSnapshots: detail.distanceSnapshots,
+            diagnostics: detail.diagnostics,
+            accelerometerSamples: detail.accelerometerSamples,
+            deviceMotionSamples: detail.deviceMotionSamples
+        )
+        try validateDetailCachePayload(payload, matches: record)
+        let payloadData = try Self.encodeDetailCachePayload(payload)
+        let cache = DetailCacheV1(
+            schemaVersion: Self.detailCacheSchemaVersion,
+            payload: payload,
+            payloadDigest: Self.detailCacheDigest(payloadData)
+        )
+        let data = try Self.encodeDetailCache(cache)
+        guard data.count <= Self.maximumDetailCacheBytes else {
+            return
+        }
+
+        let url = detailCacheURL(for: record.sessionID)
+        try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try pruneDetailCaches(keeping: url)
+    }
+
+    private func validateDetailCachePayload(
+        _ payload: DetailCachePayloadV1,
+        matches record: SessionRecord
+    ) throws {
+        guard payload.sessionID == record.sessionID,
+              payload.packageDigest == record.packageDigest,
+              payload.packageDigest.bytes.count == 32,
+              payload.byteCount == record.byteCount,
+              payload.record == record,
+              payload.heartRateSnapshots.count <= Self.maximumCachedSnapshotPoints,
+              payload.distanceSnapshots.count <= Self.maximumCachedSnapshotPoints,
+              payload.diagnostics.count <= Self.maximumCachedDiagnostics,
+              payload.accelerometerSamples.count <= Self.maximumCachedMotionSamples,
+              payload.deviceMotionSamples.count <= Self.maximumCachedMotionSamples else {
+            throw DetailCacheError.invalid
+        }
+    }
+
+    private func pruneDetailCaches(keeping currentURL: URL) throws {
+        let files = try fileManager.contentsOfDirectory(
+            at: cacheDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+        let currentPath = currentURL.standardizedFileURL.path
+        let otherFiles = files
+            .filter { url in
+                guard url.pathExtension == "json",
+                      url.standardizedFileURL.path != currentPath else { return false }
+                return (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            }
+            .sorted { lhs, rhs in
+                let leftDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                    ?? .distantPast
+                let rightDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                    ?? .distantPast
+                return leftDate > rightDate
+            }
+        let otherCacheLimit = max(0, Self.maximumDetailCacheEntries - 1)
+        for url in otherFiles.dropFirst(otherCacheLimit) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+
+    private static func encodeDetailCachePayload(_ payload: DetailCachePayloadV1) throws -> Data {
+        try encodeDetailCacheValue(payload)
+    }
+
+    private static func encodeDetailCache(_ cache: DetailCacheV1) throws -> Data {
+        try encodeDetailCacheValue(cache)
+    }
+
+    private static func encodeDetailCacheValue<Value: Encodable>(_ value: Value) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(value)
+    }
+
+    private static func detailCacheDigest(_ data: Data) -> SessionDigestV1 {
+        SessionDigestV1(bytes: Data(SHA256.hash(data: data)))
+    }
+
+    private func validateDurableReceipt(for record: SessionRecord) throws {
+        let url = receiptURL(for: record)
+        guard fileManager.fileExists(atPath: url.path),
+              let payload = try? Data(contentsOf: url),
+              let receipt = try? SessionTransferCodecV1.decodeReceipt(payload),
+              receipt.sessionID == record.sessionID,
+              receipt.packageDigest == record.packageDigest,
+              receipt.destination == "iPhone" else {
+            throw RepositoryError.exportIntegrityFailure
+        }
+    }
+
     private func persistReceipt(for record: SessionRecord) throws -> Data {
         let url = receiptURL(for: record)
         if fileManager.fileExists(atPath: url.path) {
             let existing = try Data(contentsOf: url)
-            _ = try SessionTransferCodecV1.decodeReceipt(existing)
-            return existing
+            if let receipt = try? SessionTransferCodecV1.decodeReceipt(existing),
+               receipt.sessionID == record.sessionID,
+               receipt.packageDigest == record.packageDigest,
+               receipt.destination == "iPhone" {
+                return existing
+            }
+            try fileManager.removeItem(at: url)
         }
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let receipt = SyncReceiptV1(
