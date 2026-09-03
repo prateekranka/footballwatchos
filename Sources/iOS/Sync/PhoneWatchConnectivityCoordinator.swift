@@ -5,8 +5,18 @@ import Foundation
 /// the delegate callback and sends only stable Foundation values to the
 /// repository actor.
 final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unchecked Sendable {
+    /// Posted when a Watch package file arrives at the iPhone (before import).
+    static let sessionReceivedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.sessionReceived"
+    )
+    /// Posted after a Watch package has been durably imported on the iPhone.
+    static let sessionImportedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.sessionImported"
+    )
+
     private let repository: FileSessionRepository
     private let diagnosticRepository: PhoneDiagnosticRepository
+    private let pipelinePushService: PipelinePushService
     private let configuration: FileSessionRepository.Configuration
     private let session: WCSession
 
@@ -14,10 +24,12 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         repository: FileSessionRepository,
         diagnosticRepository: PhoneDiagnosticRepository,
         configuration: FileSessionRepository.Configuration,
+        pipelinePushService: PipelinePushService = PipelinePushService(),
         session: WCSession = .default
     ) {
         self.repository = repository
         self.diagnosticRepository = diagnosticRepository
+        self.pipelinePushService = pipelinePushService
         self.configuration = configuration
         self.session = session
         super.init()
@@ -50,6 +62,8 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         } else {
             envelopeData = nil
         }
+
+        NotificationCenter.default.post(name: Self.sessionReceivedNotification, object: nil)
 
         do {
             // This move is synchronous by design: WatchConnectivity can remove
@@ -121,10 +135,20 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     private func importStagedDelivery(_ deliveryID: String) {
         let repository = repository
-        Task { [weak self, repository] in
+        let pushService = pipelinePushService
+        Task { [weak self, repository, pushService] in
             let outcome = await repository.importStaged(deliveryID: deliveryID)
             guard let payload = outcome.receiptPayload else { return }
             self?.queueReceipt(payload)
+            // After the durable import receipt, relay the package and its
+            // analytics to the health pipeline (app-native push).
+            if case let .imported(record, _) = outcome {
+                NotificationCenter.default.post(name: Self.sessionImportedNotification, object: nil)
+                await pushService.pushImportedSession(
+                    sessionID: record.sessionID,
+                    repository: repository
+                )
+            }
         }
     }
 
@@ -161,6 +185,7 @@ final class PhoneTransferRuntime: @unchecked Sendable {
 
     let repository: FileSessionRepository?
     let diagnosticRepository: PhoneDiagnosticRepository?
+    let pipelinePushService: PipelinePushService?
     private let coordinator: PhoneWatchConnectivityCoordinator?
     let startupErrorDescription: String?
 
@@ -171,17 +196,21 @@ final class PhoneTransferRuntime: @unchecked Sendable {
             let diagnosticRepository = try PhoneDiagnosticRepository(
                 rootDirectory: configuration.rootDirectory
             )
+            let pipelinePushService = PipelinePushService()
             self.repository = repository
             self.diagnosticRepository = diagnosticRepository
+            self.pipelinePushService = pipelinePushService
             self.coordinator = PhoneWatchConnectivityCoordinator(
                 repository: repository,
                 diagnosticRepository: diagnosticRepository,
-                configuration: configuration
+                configuration: configuration,
+                pipelinePushService: pipelinePushService
             )
             self.startupErrorDescription = nil
         } catch {
             self.repository = nil
             self.diagnosticRepository = nil
+            self.pipelinePushService = nil
             self.coordinator = nil
             self.startupErrorDescription = String(describing: error)
         }

@@ -72,16 +72,17 @@ public enum SessionTransferCodecV1 {
         at url: URL,
         createdAt: Date = Date()
     ) throws -> InspectedSessionPackageV1 {
-        let read = try FootySessionPackageV1.read(from: url)
-        guard read.status == .complete else {
+        // Bounded-memory scan: packages of unbounded session length are
+        // inspected on the Watch before transfer; a full-frame decode there
+        // trips watchOS jetsam. Only envelope + completion are retained.
+        let scan = try FootySessionPackageV1.scanStructure(of: url)
+        guard scan.status == .complete else {
             throw SessionTransferErrorV1.incompletePackage
         }
-        guard let first = read.frames.first,
-              case let .envelope(sessionEnvelope) = first.payload else {
+        guard let sessionEnvelope = scan.envelope else {
             throw SessionTransferErrorV1.missingEnvelope
         }
-        guard let last = read.frames.last,
-              case let .completion(completion) = last.payload else {
+        guard let completion = scan.completion else {
             throw SessionTransferErrorV1.missingCompletion
         }
 
@@ -89,7 +90,7 @@ public enum SessionTransferCodecV1 {
         let byteCount = UInt64(values.fileSize ?? 0)
         let transferEnvelope = SessionTransferEnvelopeV1(
             sessionID: sessionEnvelope.sessionID,
-            packageDigest: read.wholeFileDigest,
+            packageDigest: scan.wholeFileDigest,
             byteCount: byteCount,
             createdAt: createdAt
         )

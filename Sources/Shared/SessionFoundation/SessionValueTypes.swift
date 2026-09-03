@@ -86,8 +86,10 @@ public enum MetricProvenanceV1: String, Codable, Sendable, Equatable {
 public enum MetricUnitV1: String, Codable, Sendable, Equatable {
     case seconds
     case meters
+    case metersPerSecond
     case beatsPerMinute
     case kilocalories
+    case percent
     case count
 }
 

@@ -24,6 +24,64 @@ struct WatchSyncEnqueueResult: Sendable, Equatable {
     let presentation: WatchSyncPresentation
 }
 
+/// Bridges launch-time package discovery into the WatchConnectivity outbox.
+///
+/// Only a live seal used to enqueue its package for transfer, so a recovered
+/// `.partial` (or a sealed package whose enqueue was interrupted by a crash)
+/// could sit in Watch storage forever while the iPhone stayed empty. Every
+/// submission is digest-keyed and idempotent in the outbox, so re-submitting
+/// the same file across launches cannot create duplicate transfers.
+@MainActor
+final class LaunchRecoverySync {
+    static let maximumSubmissionsPerFile = 2
+
+    private var submissions: [String: Int] = [:]
+    private let submit: @MainActor (URL) async -> Void
+
+    init(submit: @MainActor @escaping (URL) async -> Void) {
+        self.submit = submit
+    }
+
+    static func live() -> LaunchRecoverySync {
+        LaunchRecoverySync { url in
+            let result = await WatchSyncCoordinator.shared.enqueueSealedPackage(at: url)
+            WatchLog.recorder.info(
+                "launchRecoverySync: \(url.lastPathComponent, privacy: .public) -> \(result.key != nil ? "enqueued" : "needs-attention", privacy: .public)"
+            )
+        }
+    }
+
+    func submitDiscoveredPackage(at url: URL) async {
+        let filename = url.lastPathComponent
+        let submittedCount = submissions[filename, default: 0]
+        guard submittedCount < Self.maximumSubmissionsPerFile else {
+            WatchLog.recorder.warning(
+                "launchRecoverySync: \(filename, privacy: .public) exceeded \(Self.maximumSubmissionsPerFile) submissions; leaving it in Watch storage"
+            )
+            return
+        }
+        submissions[filename] = submittedCount + 1
+        await submit(url)
+    }
+
+    /// A lingering `.partial` recovers into `<stem>.recovered.<uuid>.footysession`.
+    /// If an earlier launch already recovered this stem, reuse that file so
+    /// Watch storage never holds duplicate recovered copies of one session.
+    nonisolated static func recoveredFilename(
+        forPartialNamed filename: String,
+        discovered: [StoredSessionPackageV1]
+    ) -> String? {
+        let stem = (filename as NSString).deletingPathExtension
+        return discovered
+            .filter { $0.kind == .sealed }
+            .map(\.filename)
+            .first {
+                $0.hasPrefix("\(stem).recovered.")
+                    && $0.hasSuffix(".\(FootySessionPackageV1.fileExtension)")
+            }
+    }
+}
+
 /// Coordinates only device-to-device file transport. It never treats
 /// reachability, `transferFile` submission, or framework completion as proof
 /// that the iPhone has imported the private package.
@@ -99,6 +157,23 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         case .retryableFailure:
             return .needsAttention
         }
+    }
+
+    /// True when the outbox already holds a record for this exact package
+    /// digest, so a discovered file needs no re-inspection or re-enqueue.
+    func hasRecord(withDigest digest: SessionDigestV1) async -> Bool {
+        guard outboxFailure == nil else { return false }
+        if cachedRecords.isEmpty {
+            await refreshCachedStateNow()
+        }
+        return cachedRecords.values.contains { $0.key.packageDigest == digest }
+    }
+
+    /// The current outbox records for aggregation. The cache refreshes on
+    /// every receipt, framework completion, and enqueue, so this read is
+    /// synchronous and never fabricates transfer state.
+    func outboxRecords() -> [WatchTransferOutboxRecordV1] {
+        Array(cachedRecords.values)
     }
 
     private func activatedOrUpdated() {

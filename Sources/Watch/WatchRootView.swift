@@ -5,55 +5,53 @@ struct WatchRootView: View {
     @ObservedObject var motionCapture: MotionCaptureController
 
     var body: some View {
-        Group {
-            switch recorder.phase {
-            case .authorizing:
-                ProgressView("Preparing Health")
+        NavigationStack {
+            Group {
+                switch recorder.phase {
+                case .authorizing:
+                    ProgressView("Preparing Health")
 
-            case .idle:
-                StartFootballView(
-                    recoveryNotice: recorder.recoveryNotice,
-                    start: recorder.startCountdown
-                )
+                case .idle:
+                    StartFootballView(recorder: recorder)
 
-            case .countdown(let value):
-                CountdownView(value: value, cancel: recorder.cancelCountdown)
+                case .countdown(let value):
+                    CountdownView(value: value, cancel: recorder.cancelCountdown)
 
-            case .starting:
-                ProgressView("Starting workout")
+                case .starting:
+                    ProgressView("Starting workout")
 
-            case .active:
-                ActiveFootballView(
-                    recorder: recorder,
-                    motionCapture: motionCapture
-                )
+                case .active:
+                    ActiveFootballView(
+                        recorder: recorder,
+                        motionCapture: motionCapture
+                    )
 
-            case .finishing:
-                ProgressView("Saving session")
+                case .finishing:
+                    ProgressView("Saving session")
 
-            case .saved(let summary):
-                SavedSessionView(
-                    summary: summary,
-                    syncCoordinator: recorder.syncCoordinator,
-                    recordAnother: recorder.resetAfterResult
-                )
+                case .saved(let summary):
+                    SavedSessionView(
+                        summary: summary,
+                        syncCoordinator: recorder.syncCoordinator,
+                        recordAnother: recorder.resetAfterResult
+                    )
 
-            case .failed(let message):
-                FailureView(
-                    message: message,
-                    retry: recorder.retryAfterFailure
-                )
+                case .failed(let message):
+                    FailureView(
+                        message: message,
+                        retry: recorder.retryAfterFailure
+                    )
+                }
             }
-        }
-        .task {
-            recorder.prepare()
+            .task {
+                recorder.prepare()
+            }
         }
     }
 }
 
 private struct StartFootballView: View {
-    let recoveryNotice: String?
-    let start: () -> Void
+    @ObservedObject var recorder: WorkoutRecorder
 
     var body: some View {
         ScrollView {
@@ -72,14 +70,7 @@ private struct StartFootballView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                if let recoveryNotice {
-                    Text(recoveryNotice)
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
-                }
-
-                Button(action: start) {
+                Button(action: recorder.startCountdown) {
                     Label("Start Football", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                 }
@@ -87,8 +78,245 @@ private struct StartFootballView: View {
                 .tint(.green)
                 .controlSize(.large)
                 .accessibilityHint("Starts after a three second countdown")
+
+                NavigationLink {
+                    RecoveryStatusView(recorder: recorder)
+                } label: {
+                    HStack {
+                        Label("Session Recovery", systemImage: "arrow.triangle.2.circlepath")
+                        Spacer()
+                        if recorder.recoveryAggregate?.attentionRequired == true {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .accessibilityLabel("Recovery or transfer work remains")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityHint("Shows interrupted sessions and iPhone transfer status")
             }
             .padding(.horizontal, 8)
+        }
+    }
+}
+
+private struct RecoveryStatusView: View {
+    @ObservedObject var recorder: WorkoutRecorder
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                if let aggregate = recorder.recoveryAggregate {
+                    VStack(spacing: 4) {
+                        statusRow(
+                            "Needs recovery",
+                            value: "\(aggregate.needsRecoveryCount)",
+                            emphasized: aggregate.needsRecoveryCount > 0
+                        )
+                        statusRow(
+                            "Recovered",
+                            value: "\(aggregate.recoveredCount)/\(aggregate.sourceSessionCount)",
+                            emphasized: false
+                        )
+                        statusRow(
+                            "Waiting for iPhone",
+                            value: "\(aggregate.waitingForIPhoneCount)",
+                            emphasized: false
+                        )
+                        statusRow(
+                            "Imported",
+                            value: "\(aggregate.importedCount)",
+                            emphasized: false
+                        )
+                        statusRow(
+                            "Needs attention",
+                            value: "\(aggregate.needsAttentionCount)",
+                            emphasized: aggregate.needsAttentionCount > 0
+                        )
+                    }
+
+                    if aggregate.sourceSessionCount > 0 {
+                        if aggregate.needsRecoveryCount > 0 {
+                            recoveryProgress(
+                                progress: Double(aggregate.recoveredCount),
+                                total: Double(aggregate.sourceSessionCount),
+                                label: "Recovered \(aggregate.recoveredCount) of \(aggregate.sourceSessionCount)"
+                            )
+                        } else {
+                            let transferTotal = Double(max(aggregate.recoveredCount, 1))
+                            recoveryProgress(
+                                progress: Double(aggregate.importedCount),
+                                total: transferTotal,
+                                label: "Transferred \(aggregate.importedCount) of \(aggregate.recoveredCount) to iPhone"
+                            )
+                        }
+                    }
+
+                    if aggregate.sourceSessionCount == 0 {
+                        Label("No interrupted sessions", systemImage: "checkmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else if aggregate.allSessionsTransferred {
+                        Label("All sessions transferred", systemImage: "checkmark.icloud.fill")
+                            .font(.caption.bold())
+                            .foregroundStyle(.green)
+                            .multilineTextAlignment(.center)
+                            .accessibilityHint("Every recovered session has an iPhone receipt")
+                    }
+                } else {
+                    ProgressView("Checking…")
+                }
+
+                if !recorder.recoveryLog.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(recorder.recoveryLog) { entry in
+                            RecoveryLogRow(entry: entry)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                }
+
+                if let message = recorder.recoveryMessage {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                }
+
+                Button {
+                    recorder.recoverInterruptedSessionsNow()
+                } label: {
+                    if recorder.isRecovering {
+                        HStack {
+                            ProgressView()
+                            Text("Recovering…")
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Recover Sessions", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(recorder.isRecovering)
+                .accessibilityHint("Recovers interrupted sessions and queues them for iPhone transfer")
+
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Home", systemImage: "house.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .controlSize(.large)
+                .accessibilityHint("Returns to the Football home screen")
+            }
+            .padding(.horizontal, 8)
+        }
+        .navigationTitle("Session Recovery")
+        .task {
+            await recorder.refreshRecoveryAggregate()
+        }
+    }
+
+    private func statusRow(_ title: String, value: String, emphasized: Bool) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .monospacedDigit()
+                .foregroundStyle(emphasized ? Color.orange : Color.primary)
+        }
+        .font(.caption)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func recoveryProgress(progress: Double, total: Double, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ProgressView(value: progress, total: total)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+    }
+}
+
+/// One recovered/queued/failed session line: human-readable identity, never
+/// the opaque package filename.
+private struct RecoveryLogRow: View {
+    let entry: SessionRecoveryLogEntryV1
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: iconName)
+                .font(.caption)
+                .foregroundStyle(iconColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption.bold())
+                    .lineLimit(2)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var title: String {
+        if let startedAt = entry.startedAt {
+            return SessionDisplayFormatting.sessionTime(startedAt)
+        }
+        return "Session"
+    }
+
+    private var detail: String {
+        switch entry.outcome {
+        case .failed:
+            return entry.message
+        case .recovered, .queued:
+            var parts: [String] = []
+            parts.append(entry.outcome == .recovered ? "Recovered" : "Queued for transfer")
+            if let duration = entry.duration {
+                parts.append(SessionDisplayFormatting.shortDuration(duration))
+            }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    private var accessibilityText: String {
+        "\(detail) \(title)"
+    }
+
+    private var iconName: String {
+        switch entry.outcome {
+        case .recovered: "checkmark.circle.fill"
+        case .queued: "arrow.triangle.2.circlepath"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch entry.outcome {
+        case .recovered: .green
+        case .queued: .secondary
+        case .failed: .orange
         }
     }
 }

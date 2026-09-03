@@ -128,6 +128,7 @@ public actor FileSessionRepository {
         public let diagnostics: [CaptureDiagnosticsV1]
         public let accelerometerSamples: [MotionSamplePoint]
         public let deviceMotionSamples: [DeviceMotionSamplePoint]
+        public let sprintEvents: [SprintEventV1]
 
         public init(
             record: SessionRecord,
@@ -135,7 +136,8 @@ public actor FileSessionRepository {
             distanceSnapshots: [ChartPoint],
             diagnostics: [CaptureDiagnosticsV1],
             accelerometerSamples: [MotionSamplePoint] = [],
-            deviceMotionSamples: [DeviceMotionSamplePoint] = []
+            deviceMotionSamples: [DeviceMotionSamplePoint] = [],
+            sprintEvents: [SprintEventV1] = []
         ) {
             self.record = record
             self.heartRateSnapshots = heartRateSnapshots
@@ -143,6 +145,7 @@ public actor FileSessionRepository {
             self.diagnostics = diagnostics
             self.accelerometerSamples = accelerometerSamples
             self.deviceMotionSamples = deviceMotionSamples
+            self.sprintEvents = sprintEvents
         }
     }
 
@@ -315,6 +318,7 @@ public actor FileSessionRepository {
         var diagnostics: [CaptureDiagnosticsV1] = []
         var accelerometerSamples: [MotionSamplePoint] = []
         var deviceMotionSamples: [DeviceMotionSamplePoint] = []
+        var sprintEvents: [SprintEventV1] = []
 
         for (offset, frame) in read.frames.enumerated() {
             switch frame.payload {
@@ -334,6 +338,8 @@ public actor FileSessionRepository {
                         value: snapshot.meters.value
                     )
                 )
+            case let .sprintBatch(batch):
+                sprintEvents.append(contentsOf: batch.events)
             case let .captureDiagnostics(diagnostic):
                 diagnostics.append(diagnostic)
             case let .accelerometerBatch(batch):

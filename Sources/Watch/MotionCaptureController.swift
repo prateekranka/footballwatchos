@@ -54,14 +54,65 @@ enum MotionPersistenceEvent: Sendable {
     case deviceMotion(DeviceMotionBatchV1)
 }
 
-/// `AsyncStream` does not expose its consumer task. This small locked box lets
-/// stop await the completion signal without handing reference-type CM objects
-/// across an actor boundary.
+/// Bounded serial queue for app-side motion processing. Sensor callbacks
+/// enqueue mapped batches here; if the queue is backed up, batches are
+/// dropped and counted. Never blocks the caller.
+final class MotionDeliveryQueue: @unchecked Sendable {
+    private let queue = DispatchQueue(
+        label: "com.prateekranka.footballperformance.motion-delivery",
+        qos: .userInitiated
+    )
+    private let lock = NSLock()
+    private var pending = 0
+    private var dropped = 0
+    private let maxPending: Int
+
+    init(maxPending: Int) {
+        self.maxPending = maxPending
+    }
+
+    @discardableResult
+    func enqueue(_ work: @escaping @Sendable () -> Void) -> Bool {
+        lock.lock()
+        if pending >= maxPending {
+            dropped += 1
+            lock.unlock()
+            return false
+        }
+        pending += 1
+        lock.unlock()
+        queue.async { [weak self] in
+            work()
+            guard let self else { return }
+            self.lock.lock()
+            self.pending -= 1
+            self.lock.unlock()
+        }
+        return true
+    }
+
+    var droppedCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return dropped
+    }
+}
+
+/// Lock-protected completion state for the detached motion writer.
+///
+/// Do not resume a Swift continuation from the writer's background executor.
+/// On physical watchOS 26.6 that path traps in libdispatch (`brk #1`) while
+/// ending an otherwise healthy session. The main actor observes this state
+/// through short suspensions instead.
+struct MotionStorageFinishStatus: Sendable, Equatable {
+    let isFinished: Bool
+    let failure: String?
+}
+
 final class MotionStorageFailureBox: @unchecked Sendable {
     private let lock = NSLock()
     private var failure: String?
     private var isFinished = false
-    private var waiters: [CheckedContinuation<String?, Never>] = []
 
     func record(_ message: String) {
         lock.lock()
@@ -71,32 +122,81 @@ final class MotionStorageFailureBox: @unchecked Sendable {
         lock.unlock()
     }
 
+    var status: MotionStorageFinishStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return MotionStorageFinishStatus(
+            isFinished: isFinished,
+            failure: failure
+        )
+    }
+
     func finish() {
         lock.lock()
-        guard !isFinished else {
-            lock.unlock()
-            return
-        }
         isFinished = true
-        let failure = failure
-        let waiters = waiters
-        self.waiters.removeAll()
         lock.unlock()
-        waiters.forEach { $0.resume(returning: failure) }
     }
 
     func waitForFinish() async -> String? {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if isFinished {
-                let failure = failure
-                lock.unlock()
-                continuation.resume(returning: failure)
-            } else {
-                waiters.append(continuation)
-                lock.unlock()
+        while true {
+            let current = status
+            if current.isFinished {
+                return current.failure
             }
+            try? await Task.sleep(for: .milliseconds(10))
         }
+    }
+}
+
+/// Lock + semaphore FIFO replacing AsyncStream for the motion persistence
+/// path. Producers (sensor/delivery queues) call `enqueue`, which never
+/// blocks; the detached ingress task waits on the semaphore and drains.
+final class MotionEventBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var events: [MotionPersistenceEvent] = []
+    private var finished = false
+    private let limit: Int
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    /// Returns false when the buffer is full or finished (caller records the
+    /// quality failure). Never blocks.
+    func enqueue(_ event: MotionPersistenceEvent) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished, events.count < limit else { return false }
+        events.append(event)
+        semaphore.signal()
+        return true
+    }
+
+    func finish() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    /// Blocks the consumer until at least one event or finish arrives.
+    func waitForEvent() {
+        semaphore.wait()
+    }
+
+    func dequeueAll() -> [MotionPersistenceEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        let out = events
+        events = []
+        return out
+    }
+
+    var isFinishedAndEmpty: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished && events.isEmpty
     }
 }
 
@@ -112,45 +212,59 @@ final class MotionStorageFailureBox: @unchecked Sendable {
 /// actor. The writer remains an actor, preserving single-writer exclusivity
 /// with the heart-rate/distance paths in `WorkoutRecorder`.
 ///
+/// b15 post-mortem (2026-08-22, three identical crashes): even with the
+/// detached consumer, `AsyncStream.Continuation.yield` from Core Motion's
+/// delivery queue trapped — EXC_BREAKPOINT / SIGTRAP inside libdispatch,
+/// reached via the Swift concurrency runtime (frames:
+/// closure → libswift_Concurrency → libdispatch 0x32b34, `brk #1`, exception
+/// address 0x23819b34 in all three reports). The AsyncStream yield path is
+/// gone entirely: `yield` now touches only NSLock and a DispatchSemaphore.
+/// No Swift concurrency runtime and no libdispatch queue hops remain in the
+/// capture path, so background producers cannot trap on it.
+///
 /// Contract:
-/// - `yield(_:)` is thread-safe and never blocks Core Motion's callback queue.
+/// - `yield(_:)` is thread-safe and never blocks the caller.
 /// - Events persist strictly in yield order (single FIFO consumer).
-/// - Overflow of the bounded stream buffer records a quality failure instead
+/// - Overflow of the bounded buffer records a quality failure instead
 ///   of growing without bound.
 /// - `finish()` ends intake; the consumer synchronizes the writer exactly once
 ///   and then signals `failureBox`, so sealing waits for durability.
 final class MotionPackageIngress: @unchecked Sendable {
-    private let continuation: AsyncStream<MotionPersistenceEvent>.Continuation
+    private let buffer: MotionEventBuffer
     private let failureBox: MotionStorageFailureBox
 
     init(
         writer: SessionPackageWriter,
         failureBox: MotionStorageFailureBox,
-        bufferingLimit: Int = 128
+        bufferingLimit: Int = 512
     ) {
         self.failureBox = failureBox
-        let pair = AsyncStream<MotionPersistenceEvent>.makeStream(
-            of: MotionPersistenceEvent.self,
-            bufferingPolicy: .bufferingNewest(bufferingLimit)
-        )
-        continuation = pair.continuation
+        let buffer = MotionEventBuffer(limit: bufferingLimit)
+        self.buffer = buffer
 
         // Detached on purpose: an inheriting task would adopt the caller's
         // main-actor isolation and repeat the b14 crash. The writer actor
         // serializes the actual writes; this loop adds no concurrency of its
-        // own beyond waiting on the stream.
-        Task.detached(priority: .utility) { [failureBox] in
-            for await event in pair.stream {
-                do {
-                    switch event {
-                    case .accelerometer(let batch):
-                        try await writer.appendAccelerometerBatch(batch)
-                    case .deviceMotion(let batch):
-                        try await writer.appendDeviceMotionBatch(batch)
+        // own beyond waiting on the buffer.
+        Task.detached(priority: .utility) { [failureBox, buffer] in
+            while true {
+                buffer.waitForEvent()
+                let batch = buffer.dequeueAll()
+                for event in batch {
+                    do {
+                        switch event {
+                        case .accelerometer(let batch):
+                            try await writer.appendAccelerometerBatch(batch)
+                        case .deviceMotion(let batch):
+                            try await writer.appendDeviceMotionBatch(batch)
+                        }
+                    } catch {
+                        // First failure wins; later failures cannot undo it.
+                        failureBox.record(error.localizedDescription)
                     }
-                } catch {
-                    // First failure wins; later failures cannot undo it.
-                    failureBox.record(error.localizedDescription)
+                }
+                if buffer.isFinishedAndEmpty {
+                    break
                 }
             }
             do {
@@ -164,7 +278,7 @@ final class MotionPackageIngress: @unchecked Sendable {
 
     /// Called from sensor callback queues. Never blocks the caller.
     func yield(_ event: MotionPersistenceEvent) {
-        guard case .enqueued = continuation.yield(event) else {
+        guard buffer.enqueue(event) else {
             // A dropped event is a capture-quality failure even though it is
             // not a file-system error; it prevents a full-capture claim.
             failureBox.record("Bounded motion persistence buffer dropped a batch.")
@@ -173,7 +287,7 @@ final class MotionPackageIngress: @unchecked Sendable {
     }
 
     func finish() {
-        continuation.finish()
+        buffer.finish()
     }
 }
 
@@ -288,6 +402,9 @@ private final class FallbackErrorGate: @unchecked Sendable {
 
 @MainActor
 final class MotionCaptureController: ObservableObject {
+    /// Magnitudes feed the sprint detector via `detectorMagnitudes` (filled on
+    /// the delivery queue, drained on the main actor).
+
     @Published private(set) var snapshot: MotionCaptureSnapshot = .idle
 
     private let fallbackMotionManager = CMMotionManager()
@@ -437,6 +554,10 @@ final class MotionCaptureController: ObservableObject {
         captureID = UUID()
         stopActiveStreams()
         stopSnapshotTimer()
+        let dropped = deliveryQueue.droppedCount
+        if dropped > 0 {
+            failureBox?.record("Motion delivery queue dropped \(dropped) batches (backlog).")
+        }
         ingress?.finish()
         ingress = nil
         failureBox = nil
@@ -444,26 +565,38 @@ final class MotionCaptureController: ObservableObject {
 
     // MARK: - Batched Core Motion
     //
-    // Hot-path rules (learned from the b14 crash):
-    // 1. The handler does exactly three things: map, record stats, yield to
-    //    the ingress. Everything expensive happens elsewhere.
-    // 2. Manager properties are read once at start, never inside the handler;
-    //    touching a CMBatchedSensorManager from its own data-delivery queue is
-    //    not documented as safe, so the handlers capture plain values only.
-    // 3. No Task creation and no main-actor hops per delivery.
+    // Hot-path rules (b14 crash -> b15 fix -> b15 STILL crashed, watchdog 309
+    // in the handler closures on 2026-08-22 x3):
+    // Hot-path rules (b14 crash -> b15 fix -> b18 crash, all identical traps):
+    // 1. The handler does exactly one thing: map samples. Nothing else.
+    // 2. Stats, persistence yield, and detector feeds run on the dedicated
+    //    delivery queue (bounded; drops counted, never back-pressures).
+    // 3. No Task creation, no main-actor hops, no NSLock, no AsyncStream
+    //    yield on the Core Motion callback queue.
+    // 4. Manager properties are read once at start, never inside the handler.
+    // 5. The handler closures are `@Sendable` and capture only Sendable
+    //    boxes — never `self`. A non-`@Sendable` closure that captures
+    //    `@MainActor self` is compiled with a `swift_task_isCurrentExecutor`
+    //    prologue (SE-0338 isolation inheritance via ObjC block parameter),
+    //    and that prologue traps on the CoreMotion background queue
+    //    (`dispatch_assert_queue(main)` fails → `brk #1` in libdispatch).
+    //    This is the proven root cause of the b14–b18 crashes; the
+    //    AsyncStream yield was a misattribution.
 
     private func startBatchedCapture(captureID: UUID) {
         let manager = CMBatchedSensorManager()
         batchedSensorManager = manager
         let ingress = ingress
+        let deliveryQueue = self.deliveryQueue
         let accelerometerStats = self.accelerometerStats
         let deviceMotionStats = self.deviceMotionStats
+        let detectorMagnitudes = self.detectorMagnitudes
         let accelerometerHz = Double(manager.accelerometerDataFrequency)
         let deviceMotionHz = Double(manager.deviceMotionDataFrequency)
 
         _ = captureID // Streams are stopped via stopActiveStreams(); late events after stop carry no state.
 
-        manager.startAccelerometerUpdates { samples, error in
+        manager.startAccelerometerUpdates { @Sendable samples, error in
             let mappedSamples = (samples ?? []).map { sample in
                 AccelerometerSampleV1(
                     timestamp: sample.timestamp,
@@ -475,19 +608,27 @@ final class MotionCaptureController: ObservableObject {
                 )
             }
             let errorDescription = error?.localizedDescription
-            accelerometerStats.record(
-                timestamps: mappedSamples.map(\.timestamp),
-                reportedHz: accelerometerHz > 0 ? accelerometerHz : nil,
-                errorDescription: errorDescription
-            )
-            if !mappedSamples.isEmpty {
-                ingress?.yield(.accelerometer(
-                    AccelerometerBatchV1(source: .batchedCoreMotion, samples: mappedSamples)
-                ))
+            // Everything else runs on the delivery queue; never here.
+            deliveryQueue.enqueue {
+                accelerometerStats.record(
+                    timestamps: mappedSamples.map(\.timestamp),
+                    reportedHz: accelerometerHz > 0 ? accelerometerHz : nil,
+                    errorDescription: errorDescription
+                )
+                if !mappedSamples.isEmpty {
+                    ingress?.yield(.accelerometer(
+                        AccelerometerBatchV1(source: .batchedCoreMotion, samples: mappedSamples)
+                    ))
+                    detectorMagnitudes.append(mappedSamples.map { sample in
+                        let a = sample.acceleration
+                        let magnitude = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot()
+                        return (max(0, magnitude - 9.81), Date())
+                    })
+                }
             }
         }
 
-        manager.startDeviceMotionUpdates { samples, error in
+        manager.startDeviceMotionUpdates { @Sendable samples, error in
             let mappedSamples = (samples ?? []).map { sample in
                 DeviceMotionSampleV1(
                     timestamp: sample.timestamp,
@@ -509,29 +650,91 @@ final class MotionCaptureController: ObservableObject {
                 )
             }
             let errorDescription = error?.localizedDescription
-            deviceMotionStats.record(
-                timestamps: mappedSamples.map(\.timestamp),
-                reportedHz: deviceMotionHz > 0 ? deviceMotionHz : nil,
-                errorDescription: errorDescription
-            )
-            if !mappedSamples.isEmpty {
-                ingress?.yield(.deviceMotion(
-                    DeviceMotionBatchV1(source: .batchedCoreMotion, samples: mappedSamples)
-                ))
+            deliveryQueue.enqueue {
+                deviceMotionStats.record(
+                    timestamps: mappedSamples.map(\.timestamp),
+                    reportedHz: deviceMotionHz > 0 ? deviceMotionHz : nil,
+                    errorDescription: errorDescription
+                )
+                if !mappedSamples.isEmpty {
+                    ingress?.yield(.deviceMotion(
+                        DeviceMotionBatchV1(source: .batchedCoreMotion, samples: mappedSamples)
+                    ))
+                    detectorMagnitudes.append(mappedSamples.map { sample in
+                        let u = sample.userAcceleration
+                        let magnitude = (u.x * u.x + u.y * u.y + u.z * u.z).squareRoot()
+                        return (magnitude, Date())
+                    })
+                }
             }
         }
     }
+
+    // MARK: - Delivery queue (hot-path offload)
+    //
+    // All three 2026-08-22 crash reports (watchdog 309) show the faulting
+    // thread spinning inside the CMBatchedSensorManager handler closures on
+    // the Core Motion data queue. The b14 hot-path rules (map, record, yield;
+    // no Tasks, no main hops) were not enough: stats recording (NSLock) and
+    // AsyncStream yield still ran on the sensor queue. The handlers now do
+    // ONLY the unavoidable sample mapping, then hand off to this serial queue.
+    // If more than `maxPendingDeliveries` batches are queued, new batches are
+    // dropped and counted, so a slow writer can never back-pressure the
+    // sensor queue again.
+
+    private let deliveryQueue = MotionDeliveryQueue(maxPending: 8)
+
+    /// Lock-protected accumulator for sprint-detection magnitudes. Filled on
+    /// the delivery queue, drained on the main actor (never mutated off-main
+    /// after drain).
+    final class MotionMagnitudeBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: [(magnitude: Double, timestamp: Date)] = []
+        private var capacity = 2_048
+
+        func append(_ values: [(magnitude: Double, timestamp: Date)]) {
+            guard !values.isEmpty else { return }
+            lock.lock()
+            defer { lock.unlock() }
+            pending.append(contentsOf: values)
+            if pending.count > capacity {
+                pending.removeFirst(pending.count - capacity)
+            }
+        }
+
+        func drain() -> [(magnitude: Double, timestamp: Date)] {
+            lock.lock()
+            defer { lock.unlock() }
+            let drained = pending
+            pending = []
+            return drained
+        }
+    }
+
+    /// Box receiving raw-magnitude feeds for the sprint detector. The
+    /// WorkoutRecorder drains it on the main actor at builder-update rate and
+    /// feeds `SprintDetectorV1.consumeAccelerationMagnitude`.
+    let detectorMagnitudes = MotionMagnitudeBox()
 
     // MARK: - Foreground diagnostic fallback (simulator-only path)
 
     private func startForegroundDiagnosticFallback(captureID: UUID) {
         let requestedHz = 50.0
         let updateInterval = 1.0 / requestedHz
+        let ingress = ingress
+        let deliveryQueue = self.deliveryQueue
+        let accelerometerStats = self.accelerometerStats
+        let deviceMotionStats = self.deviceMotionStats
+        let detectorMagnitudes = self.detectorMagnitudes
+        let accelErrorGate = fallbackAccelerometerErrorGate
+        let motionErrorGate = fallbackDeviceMotionErrorGate
+        let accelBuffer = fallbackAccelerometerBuffer
+        let motionBuffer = fallbackDeviceMotionBuffer
         fallbackMotionManager.accelerometerUpdateInterval = updateInterval
         fallbackMotionManager.deviceMotionUpdateInterval = updateInterval
 
         if fallbackMotionManager.isAccelerometerAvailable {
-            fallbackMotionManager.startAccelerometerUpdates(to: fallbackQueue) { [weak self] sample, error in
+            fallbackMotionManager.startAccelerometerUpdates(to: fallbackQueue) { @Sendable sample, error in
                 let mappedSample = sample.map {
                     AccelerometerSampleV1(
                         timestamp: $0.timestamp,
@@ -544,29 +747,35 @@ final class MotionCaptureController: ObservableObject {
                 }
                 let errorDescription = error?.localizedDescription
                 guard let mappedSample else {
-                    if let firstError = self?.fallbackAccelerometerErrorGate.takeFirst(errorDescription) {
-                        Task { @MainActor [weak self] in
-                            self?.receiveAccelerometerBatch(
-                                [],
+                    if let firstError = accelErrorGate.takeFirst(errorDescription) {
+                        deliveryQueue.enqueue {
+                            accelerometerStats.record(
+                                timestamps: [],
                                 reportedHz: requestedHz,
-                                errorDescription: firstError,
-                                captureID: captureID,
-                                source: .foregroundFallback
+                                errorDescription: firstError
                             )
                         }
                     }
                     return
                 }
 
-                guard let batch = self?.fallbackAccelerometerBuffer.append(mappedSample) else { return }
-                Task { @MainActor [weak self] in
-                    self?.receiveAccelerometerBatch(
-                        batch,
+                guard let batch = accelBuffer.append(mappedSample) else { return }
+                deliveryQueue.enqueue {
+                    accelerometerStats.record(
+                        timestamps: batch.map(\.timestamp),
                         reportedHz: requestedHz,
-                        errorDescription: errorDescription,
-                        captureID: captureID,
-                        source: .foregroundFallback
+                        errorDescription: errorDescription
                     )
+                    if !batch.isEmpty {
+                        ingress?.yield(.accelerometer(
+                            AccelerometerBatchV1(source: .foregroundFallback, samples: batch)
+                        ))
+                        detectorMagnitudes.append(batch.map { sample in
+                            let a = sample.acceleration
+                            let magnitude = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot()
+                            return (max(0, magnitude - 9.81), Date())
+                        })
+                    }
                 }
             }
         } else {
@@ -578,7 +787,7 @@ final class MotionCaptureController: ObservableObject {
         }
 
         if fallbackMotionManager.isDeviceMotionAvailable {
-            fallbackMotionManager.startDeviceMotionUpdates(to: fallbackQueue) { [weak self] sample, error in
+            fallbackMotionManager.startDeviceMotionUpdates(to: fallbackQueue) { @Sendable sample, error in
                 let mappedSample = sample.map {
                     DeviceMotionSampleV1(
                         timestamp: $0.timestamp,
@@ -601,29 +810,35 @@ final class MotionCaptureController: ObservableObject {
                 }
                 let errorDescription = error?.localizedDescription
                 guard let mappedSample else {
-                    if let firstError = self?.fallbackDeviceMotionErrorGate.takeFirst(errorDescription) {
-                        Task { @MainActor [weak self] in
-                            self?.receiveDeviceMotionBatch(
-                                [],
+                    if let firstError = motionErrorGate.takeFirst(errorDescription) {
+                        deliveryQueue.enqueue {
+                            deviceMotionStats.record(
+                                timestamps: [],
                                 reportedHz: requestedHz,
-                                errorDescription: firstError,
-                                captureID: captureID,
-                                source: .foregroundFallback
+                                errorDescription: firstError
                             )
                         }
                     }
                     return
                 }
 
-                guard let batch = self?.fallbackDeviceMotionBuffer.append(mappedSample) else { return }
-                Task { @MainActor [weak self] in
-                    self?.receiveDeviceMotionBatch(
-                        batch,
+                guard let batch = motionBuffer.append(mappedSample) else { return }
+                deliveryQueue.enqueue {
+                    deviceMotionStats.record(
+                        timestamps: batch.map(\.timestamp),
                         reportedHz: requestedHz,
-                        errorDescription: errorDescription,
-                        captureID: captureID,
-                        source: .foregroundFallback
+                        errorDescription: errorDescription
                     )
+                    if !batch.isEmpty {
+                        ingress?.yield(.deviceMotion(
+                            DeviceMotionBatchV1(source: .foregroundFallback, samples: batch)
+                        ))
+                        detectorMagnitudes.append(batch.map { sample in
+                            let u = sample.userAcceleration
+                            let magnitude = (u.x * u.x + u.y * u.y + u.z * u.z).squareRoot()
+                            return (magnitude, Date())
+                        })
+                    }
                 }
             }
         } else {
@@ -636,7 +851,56 @@ final class MotionCaptureController: ObservableObject {
         publishSnapshotFromStats()
     }
 
-    // MARK: - Shared receive path (fallback batches arrive on the main actor)
+    // MARK: - Shared receive path (delivery queue + main actor)
+
+    /// Nonisolated processing for a mapped batch. Runs on the delivery queue
+    /// for sensor deliveries and on the main actor for error-only events.
+    /// Never touches mutable main-actor state: capture staleness is handled
+    /// by stream stop + nil ingress, and the captureID check lives in the
+    /// main-actor wrappers below.
+    private nonisolated func deliverAccelerometerBatch(
+        _ samples: [AccelerometerSampleV1],
+        reportedHz: Double?,
+        errorDescription: String?,
+        source: MotionCaptureSourceV1,
+        ingress: MotionPackageIngress?
+    ) {
+        accelerometerStats.record(
+            timestamps: samples.map(\.timestamp),
+            reportedHz: reportedHz,
+            errorDescription: errorDescription
+        )
+        if !samples.isEmpty {
+            ingress?.yield(.accelerometer(AccelerometerBatchV1(source: source, samples: samples)))
+            detectorMagnitudes.append(samples.map { sample in
+                let a = sample.acceleration
+                let magnitude = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot()
+                return (max(0, magnitude - 9.81), Date())
+            })
+        }
+    }
+
+    private nonisolated func deliverDeviceMotionBatch(
+        _ samples: [DeviceMotionSampleV1],
+        reportedHz: Double?,
+        errorDescription: String?,
+        source: MotionCaptureSourceV1,
+        ingress: MotionPackageIngress?
+    ) {
+        deviceMotionStats.record(
+            timestamps: samples.map(\.timestamp),
+            reportedHz: reportedHz,
+            errorDescription: errorDescription
+        )
+        if !samples.isEmpty {
+            ingress?.yield(.deviceMotion(DeviceMotionBatchV1(source: source, samples: samples)))
+            detectorMagnitudes.append(samples.map { sample in
+                let u = sample.userAcceleration
+                let magnitude = (u.x * u.x + u.y * u.y + u.z * u.z).squareRoot()
+                return (magnitude, Date())
+            })
+        }
+    }
 
     private func receiveAccelerometerBatch(
         _ samples: [AccelerometerSampleV1],
@@ -646,14 +910,13 @@ final class MotionCaptureController: ObservableObject {
         source: MotionCaptureSourceV1
     ) {
         guard captureID == self.captureID else { return }
-        accelerometerStats.record(
-            timestamps: samples.map(\.timestamp),
+        deliverAccelerometerBatch(
+            samples,
             reportedHz: reportedHz,
-            errorDescription: errorDescription
+            errorDescription: errorDescription,
+            source: source,
+            ingress: ingress
         )
-        if !samples.isEmpty {
-            ingress?.yield(.accelerometer(AccelerometerBatchV1(source: source, samples: samples)))
-        }
     }
 
     private func receiveDeviceMotionBatch(
@@ -664,14 +927,13 @@ final class MotionCaptureController: ObservableObject {
         source: MotionCaptureSourceV1
     ) {
         guard captureID == self.captureID else { return }
-        deviceMotionStats.record(
-            timestamps: samples.map(\.timestamp),
+        deliverDeviceMotionBatch(
+            samples,
             reportedHz: reportedHz,
-            errorDescription: errorDescription
+            errorDescription: errorDescription,
+            source: source,
+            ingress: ingress
         )
-        if !samples.isEmpty {
-            ingress?.yield(.deviceMotion(DeviceMotionBatchV1(source: source, samples: samples)))
-        }
     }
 
     // MARK: - Diagnostics and snapshots

@@ -96,15 +96,56 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var exportURL: URL?
     @Published private(set) var message: String?
     @Published private(set) var isLoading = false
+    /// True while a Watch package is arriving or being imported.
+    @Published private(set) var isReceivingFromWatch = false
+    /// How many imported sessions have been pushed to the health pipeline.
+    @Published private(set) var pipelinePushedCount = 0
+    /// Last successful pipeline push time, if any.
+    @Published private(set) var pipelineLastPushedUTC: Date?
+    /// Last pipeline push failure, if any.
+    @Published private(set) var pipelineLastError: String?
 
     private let repository: FileSessionRepository?
     private let diagnosticRepository: PhoneDiagnosticRepository?
+    private let pipelinePushService: PipelinePushService?
+    private var notificationObservers: [NSObjectProtocol] = []
 
     init(runtime: PhoneTransferRuntime = .shared) {
         self.repository = runtime.repository
         self.diagnosticRepository = runtime.diagnosticRepository
+        self.pipelinePushService = runtime.pipelinePushService
         self.message = runtime.startupErrorDescription.map { _ in
             "Local iPhone storage is unavailable. No session status can be shown."
+        }
+
+        let receivedName = PhoneWatchConnectivityCoordinator.sessionReceivedNotification
+        let importedName = PhoneWatchConnectivityCoordinator.sessionImportedNotification
+        let progressName = PipelinePushService.progressDidChange
+        for name in [receivedName, importedName, progressName] {
+            let token = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.handleSyncNotification(name: name)
+                }
+            }
+            notificationObservers.append(token)
+        }
+    }
+
+    private func handleSyncNotification(name: Notification.Name) async {
+        switch name {
+        case PhoneWatchConnectivityCoordinator.sessionReceivedNotification:
+            isReceivingFromWatch = true
+        case PhoneWatchConnectivityCoordinator.sessionImportedNotification:
+            isReceivingFromWatch = false
+            await refresh()
+        case PipelinePushService.progressDidChange:
+            await refreshPipelineProgress()
+        default:
+            break
         }
     }
 
@@ -123,9 +164,20 @@ final class PhoneSessionLibraryModel: ObservableObject {
         if let diagnosticRepository {
             watchDiagnostics = await diagnosticRepository.reports()
         }
+        await refreshPipelineProgress()
         if let selectedID = selectedDetail?.record.sessionID {
             await loadDetail(for: selectedID, clearMessage: false)
         }
+    }
+
+    /// Reads the durable pipeline push progress into the published state that
+    /// drives the Session Library sync bar.
+    func refreshPipelineProgress() async {
+        guard let pipelinePushService else { return }
+        let progress = await pipelinePushService.progress()
+        pipelinePushedCount = progress.pushedCount
+        pipelineLastPushedUTC = progress.lastPushedUTC
+        pipelineLastError = progress.lastError
     }
 
     func loadDetail(for sessionID: UUID, clearMessage: Bool = true) async {

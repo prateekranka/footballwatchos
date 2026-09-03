@@ -5,25 +5,95 @@ struct SessionLibraryView: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
 
     var body: some View {
-        Group {
-            if model.sessions.isEmpty {
-                ContentUnavailableView {
-                    Label("No sessions received yet", systemImage: "tray")
-                } description: {
-                    Text("Completed Apple Watch sessions appear here after they are transferred to this iPhone.")
-                }
-                .accessibilityElement(children: .combine)
-            } else {
-                List(model.sessions) { session in
-                    NavigationLink(value: session.sessionID) {
-                        SessionLibraryRow(session: session)
+        VStack(spacing: 0) {
+            SyncStatusBanner(
+                vaultCount: model.sessions.count,
+                pushedCount: model.pipelinePushedCount,
+                isReceiving: model.isReceivingFromWatch,
+                isRefreshing: model.isLoading,
+                lastPushedUTC: model.pipelineLastPushedUTC,
+                lastError: model.pipelineLastError
+            )
+
+            Group {
+                if model.sessions.isEmpty {
+                    ContentUnavailableView {
+                        Label("No sessions received yet", systemImage: "tray")
+                    } description: {
+                        Text("Completed Apple Watch sessions appear here after they are transferred to this iPhone.")
                     }
+                    .accessibilityElement(children: .combine)
+                } else {
+                    List(model.sessions) { session in
+                        NavigationLink(value: session.sessionID) {
+                            SessionLibraryRow(session: session)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
                 }
-                .listStyle(.insetGrouped)
             }
         }
         .navigationDestination(for: UUID.self) { sessionID in
             SessionDetailScreen(sessionID: sessionID)
+        }
+    }
+}
+
+/// Shows the state of the Watch-to-iPhone-to-server sync as a progress bar.
+private struct SyncStatusBanner: View {
+    let vaultCount: Int
+    let pushedCount: Int
+    let isReceiving: Bool
+    let isRefreshing: Bool
+    let lastPushedUTC: Date?
+    let lastError: String?
+
+    var body: some View {
+        if isReceiving || (vaultCount == 0 && isRefreshing) {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text(isReceiving ? "Receiving from Apple Watch…" : "Waiting for Apple Watch…")
+                    .font(.footnote)
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+            .padding(.top, 8)
+        } else if vaultCount > 0 {
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: Double(pushedCount), total: Double(max(vaultCount, 1)))
+                HStack {
+                    Text("Server sync: \(pushedCount) of \(vaultCount) uploaded")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if pushedCount < vaultCount {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if let lastPushedUTC {
+                        Text("Last upload \(lastPushedUTC.formatted(date: .omitted, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                if let lastError {
+                    Text("Pipeline: \(lastError)")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+            .padding(.top, 8)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Server sync: \(pushedCount) of \(vaultCount) uploaded")
         }
     }
 }
@@ -338,6 +408,10 @@ private func metricText(_ metric: SessionMetricV1) -> String {
         value = String(format: "%.0f bpm", metric.value)
     case .kilocalories:
         value = String(format: "%.0f kcal", metric.value)
+    case .metersPerSecond:
+        value = String(format: "%.1f m/s", metric.value)
+    case .percent:
+        value = String(format: "%.0f%%", metric.value * 100)
     case .count:
         value = String(format: "%.0f", metric.value)
     }

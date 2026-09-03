@@ -34,7 +34,15 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     @Published private(set) var distanceMeters: Double = 0
     @Published private(set) var averageHeartRate: Double?
     @Published private(set) var startedAt: Date?
-    @Published private(set) var recoveryNotice: String?
+    /// Current recovery/transfer aggregate backing the Session Recovery screen.
+    /// Nil means the aggregate could not be read yet.
+    @Published private(set) var recoveryAggregate: SessionRecoveryAggregateV1?
+    /// Transient feedback from the last Recover Sessions run.
+    @Published private(set) var recoveryMessage: String?
+    /// Per-session log for the Session Recovery screen. Carries human-readable
+    /// identity (start time + duration); never the opaque package filename.
+    @Published private(set) var recoveryLog: [SessionRecoveryLogEntryV1] = []
+    @Published private(set) var isRecovering = false
 
     let motionCapture = MotionCaptureController()
     let syncCoordinator: WatchSyncCoordinator
@@ -52,17 +60,56 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     private var builder: HKLiveWorkoutBuilder?
     private var countdownTask: Task<Void, Never>?
     private var metricTail: Task<Void, Never>?
+    private var finishingWatchdogTask: Task<Void, Never>?
+    let launchRecoverySync: LaunchRecoverySync
     private var didRequestAuthorization = false
     private var finishRequested = false
     private var storageQualityError: String?
+    private var stateGenerationObservation: AnyCancellable?
+
+    /// Draft sprint detection; thresholds are validated via Calibration Sessions.
+    private let sprintDetector = SprintDetectorV1(threshold: SprintCalibrationStore.current())
+    private var lastSprintFlush: Date?
+
+    /// Upper bound on a legitimate seal: HealthKit end callbacks plus drain
+    /// plus final flash writes complete well inside this on a healthy watch.
+    static let finishingWatchdogTimeout: TimeInterval = 90
 
     init(
         syncCoordinator: WatchSyncCoordinator = .shared,
-        diagnosticJournal: WatchDiagnosticJournal? = WatchDiagnosticRuntime.shared.journal
+        diagnosticJournal: WatchDiagnosticJournal? = WatchDiagnosticRuntime.shared.journal,
+        launchRecoverySync: LaunchRecoverySync? = nil
     ) {
         self.syncCoordinator = syncCoordinator
         self.diagnosticJournal = diagnosticJournal
+        self.launchRecoverySync = launchRecoverySync ?? LaunchRecoverySync.live()
         super.init()
+        // Receipts, framework completions, and enqueues all bump the sync
+        // coordinator's state generation. Refreshing here keeps the recovery
+        // aggregate (and the home badge) truthful even while the Session
+        // Recovery screen is not visible.
+        stateGenerationObservation = syncCoordinator.$stateGeneration
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.refreshRecoveryAggregate()
+                }
+            }
+    }
+
+    /// Feeds raw motion magnitudes to the sprint detector. The controller
+    /// fills `detectorMagnitudes` on its delivery queue; the recorder drains
+    /// it here on the main actor at builder-update rate (1-5 Hz) so the
+    /// detector stays main-actor-confined. Raw acceleration is
+    /// gravity-subtracted (|a| − 9.81); device-motion userAcceleration is
+    /// already gravity-free. The same batches are persisted to the package,
+    /// so the raw streams remain available for later comparison.
+    private func drainDetectorMagnitudes() {
+        let magnitudes = motionCapture.detectorMagnitudes.drain()
+        guard !magnitudes.isEmpty else { return }
+        for value in magnitudes {
+            sprintDetector.consumeAccelerationMagnitude(value.magnitude, at: value.timestamp)
+        }
     }
 
     func prepare() {
@@ -154,6 +201,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         finishRequested = true
         phase = .finishing
         let endDate = Date()
+        beginFinishingWatchdog()
 
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -269,6 +317,8 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             }
             self.packageWriter = writer
             self.sessionID = sessionID
+            sprintDetector.reset()
+            lastSprintFlush = nil
             await recordDiagnostic("package_writer_created")
             WatchLog.capture(WatchLog.recorder, "beginWorkout: package writer created")
 
@@ -507,6 +557,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             qualityMessages.append(error.localizedDescription)
         }
 
+        // Seal sprint detection results before the completion frame.
+        drainDetectorMagnitudes()
+        let finalSprintBatch = sprintDetector.finalBatch()
+        if !finalSprintBatch.events.isEmpty {
+            do {
+                try await writer.appendSprintBatch(finalSprintBatch)
+            } catch {
+                storageErrors.append(error.localizedDescription)
+                qualityMessages.append(error.localizedDescription)
+            }
+        }
+
         let lifecycle: SessionLifecycleV1
         if storageErrors.isEmpty {
             lifecycle = requestedLifecycle
@@ -556,6 +618,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         self.packageWriter = nil
         self.startedAt = nil
         self.metricTail = nil
+        cancelFinishingWatchdog()
         self.phase = .saved(summary)
         WKInterfaceDevice.current().play(.success)
     }
@@ -601,6 +664,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 currentHeartRate = mostRecent
                 averageHeartRate = statistics.averageQuantity()?.doubleValue(for: heartRateUnit)
                 if let mostRecent {
+                    sprintDetector.consumeHeartRate(beatsPerMinute: mostRecent, at: timestamp)
                     enqueueMetricWrite(writer) {
                         try await writer.appendHeartRateSnapshot(
                             HeartRateSnapshotV1(
@@ -620,6 +684,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 guard let quantity = builder.statistics(for: distanceType)?.sumQuantity() else { continue }
                 let meters = quantity.doubleValue(for: .meter())
                 distanceMeters = meters
+                sprintDetector.consumeDistance(cumulativeMeters: meters, at: timestamp)
                 enqueueMetricWrite(writer) {
                     try await writer.appendDistanceSnapshot(
                         DistanceSnapshotV1(
@@ -637,6 +702,26 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             default:
                 continue
             }
+        }
+        drainDetectorMagnitudes()
+        Task { @MainActor [weak self, writer] in
+            await self?.flushSprintsIfDue(writer: writer, now: timestamp)
+        }
+    }
+
+    /// Append a sprint batch at most once per minute while the session is
+    /// active, so sprint events survive an interrupted seal.
+    private func flushSprintsIfDue(writer: SessionPackageWriter, now: Date) async {
+        if let lastSprintFlush, now.timeIntervalSince(lastSprintFlush) < 60 {
+            return
+        }
+        let batch = sprintDetector.flush()
+        guard !batch.events.isEmpty else { return }
+        do {
+            try await writer.appendSprintBatch(batch)
+            lastSprintFlush = now
+        } catch {
+            recordStorageQualityError(error.localizedDescription)
         }
     }
 
@@ -671,6 +756,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         WatchLog.recorder.warning("handleSessionEndedUnexpectedly: sealing interrupted package")
         finishRequested = true
         phase = .finishing
+        beginFinishingWatchdog()
         let endDate = Date()
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -689,47 +775,169 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         }
     }
 
+    /// A `.finishing` phase must always terminate. The HealthKit end callbacks
+    /// (`endCollection`, `finishWorkout`) have no guaranteed invocation, so a
+    /// lost callback used to leave the "Saving session" spinner up forever.
+    /// The frames are already durable in the `.partial` package by this point,
+    /// so the fail-safe surfaces an honest failure; the next launch's audit
+    /// recovers the partial and queues it for iPhone transfer.
+    private func beginFinishingWatchdog() {
+        cancelFinishingWatchdog()
+        finishingWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.finishingWatchdogTimeout * 1_000_000_000))
+            guard !Task.isCancelled, let self, case .finishing = self.phase else { return }
+            await self.recordDiagnostic("finishing_watchdog_fired", armed: false)
+            WatchLog.recorder.error("finishingWatchdog: finish did not complete in \(Self.finishingWatchdogTimeout, privacy: .public)s")
+            WKInterfaceDevice.current().play(.failure)
+            self.phase = .failed(
+                "Saving took too long and was stopped. Your session data is safe on the watch and will transfer on the next app launch."
+            )
+        }
+    }
+
+    private func cancelFinishingWatchdog() {
+        finishingWatchdogTask?.cancel()
+        finishingWatchdogTask = nil
+    }
+
     private func auditInterruptedPackages(_ repository: WatchSessionRepository) {
         Task { @MainActor [weak self] in
+            await self?.refreshRecoveryAggregate()
+        }
+    }
+
+    /// Refreshes the recovery aggregate from repository discovery and the
+    /// sync coordinator's cached outbox records. Called on entry to the
+    /// Session Recovery screen, after Recover Sessions work, and whenever the
+    /// coordinator publishes a new state generation (receipts, framework
+    /// completions, enqueues). Bounded memory: discovery lists filenames and
+    /// sizes only; no package is read.
+    func refreshRecoveryAggregate() async {
+        guard let repository else {
+            recoveryAggregate = nil
+            return
+        }
+        do {
+            let discovered = try await repository.discover()
+            recoveryAggregate = SessionRecoveryAggregateV1.compute(
+                discovered: discovered,
+                outboxRecords: syncCoordinator.outboxRecords()
+            )
+        } catch {
+            recoveryAggregate = nil
+            recoveryMessage = "Interrupted session storage could not be checked. Try again later."
+        }
+    }
+
+    /// Explicit, button-driven recovery: recover + enqueue one partial per
+    /// tap, guarded by checkpoints so any death during the work lands in the
+    /// diagnostic journal the phone can read.
+    func recoverInterruptedSessionsNow() {
+        guard !isRecovering, let repository else { return }
+        isRecovering = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isRecovering = false }
             do {
-                let partialPackages = try await repository.discover()
-                    .filter { $0.kind == .partial }
-                let packagesToAudit = Array(partialPackages.prefix(8))
-                var recoveredCount = 0
-                var quarantinedCount = 0
-                var failedCount = 0
-                for package in packagesToAudit {
+                let discovered = try await repository.discover()
+                var messages: [String] = []
+                var entries: [SessionRecoveryLogEntryV1] = []
+
+                for package in discovered where package.kind == .sealed {
+                    let url = repository.sessionsDirectory
+                        .appendingPathComponent(package.filename, isDirectory: false)
+                    let alreadyTracked = await self.syncCoordinator.hasRecord(
+                        withDigest: try FootySessionPackageV1.digest(of: url)
+                    )
+                    guard !alreadyTracked else { continue }
+                    await self.launchRecoverySync.submitDiscoveredPackage(at: url)
+                    let metadata = try? await repository.sessionMetadata(named: package.filename)
+                    let label = SessionDisplayFormatting.sessionLabel(
+                        startedAt: metadata?.startedAt,
+                        duration: metadata?.duration
+                    )
+                    let message = "Queued \(label) for transfer."
+                    messages.append(message)
+                    entries.append(
+                        SessionRecoveryLogEntryV1(
+                            sessionID: metadata?.sessionID,
+                            startedAt: metadata?.startedAt,
+                            duration: metadata?.duration,
+                            outcome: .queued,
+                            message: message
+                        )
+                    )
+                }
+
+                let partialPackages = discovered.filter { $0.kind == .partial }
+                for package in partialPackages {
                     do {
-                        _ = try await repository.recoverPartial(named: package.filename)
-                        recoveredCount += 1
-                    } catch {
-                        do {
-                            _ = try await repository.quarantinePartial(named: package.filename)
-                            quarantinedCount += 1
-                        } catch {
-                            failedCount += 1
+                        let recovered: RecoveredSessionPackageV1
+                        if let existing = LaunchRecoverySync.recoveredFilename(
+                            forPartialNamed: package.filename,
+                            discovered: discovered
+                        ) {
+                            let existingMetadata = try await repository.sessionMetadata(named: existing)
+                            recovered = RecoveredSessionPackageV1(
+                                originalFilename: package.filename,
+                                recoveredFilename: existing,
+                                sourceStatus: .tornTail,
+                                recoveredDigest: try FootySessionPackageV1.digest(
+                                    of: repository.sessionsDirectory
+                                        .appendingPathComponent(existing, isDirectory: false)
+                                ),
+                                startedAt: existingMetadata.startedAt,
+                                recordedDuration: existingMetadata.duration
+                            )
+                        } else {
+                            await self.recordDiagnostic("recovery_scan_start", armed: true)
+                            recovered = try await repository.recoverPartial(named: package.filename)
+                            await self.recordDiagnostic("recovery_scan_done", detail: recovered.recoveredFilename)
                         }
+                        await self.recordDiagnostic("recovery_enqueue_start", detail: recovered.recoveredFilename)
+                        let url = repository.sessionsDirectory
+                            .appendingPathComponent(recovered.recoveredFilename, isDirectory: false)
+                        await self.launchRecoverySync.submitDiscoveredPackage(at: url)
+                        await self.recordDiagnostic("recovery_enqueue_done", detail: recovered.recoveredFilename)
+                        let label = SessionDisplayFormatting.sessionLabel(
+                            startedAt: recovered.startedAt,
+                            duration: recovered.recordedDuration
+                        )
+                        let message = "Recovered \(label)."
+                        messages.append(message)
+                        entries.append(
+                            SessionRecoveryLogEntryV1(
+                                startedAt: recovered.startedAt,
+                                duration: recovered.recordedDuration,
+                                outcome: .recovered,
+                                message: message
+                            )
+                        )
+                    } catch {
+                        await self.recordDiagnostic(
+                            "recovery_failed",
+                            detail: Self.diagnosticErrorCode(error)
+                        )
+                        let message = "Could not recover a session: \(error.localizedDescription)"
+                        messages.append(message)
+                        entries.append(
+                            SessionRecoveryLogEntryV1(
+                                outcome: .failed,
+                                message: message
+                            )
+                        )
                     }
                 }
 
-                var notices: [String] = []
-                if recoveredCount > 0 {
-                    notices.append("Recovered \(recoveredCount) interrupted Watch session\(recoveredCount == 1 ? "" : "s").")
+                if messages.isEmpty {
+                    self.recoveryMessage = "Nothing to recover."
+                } else {
+                    self.recoveryMessage = messages.joined(separator: " ")
                 }
-                if quarantinedCount > 0 {
-                    notices.append("Kept \(quarantinedCount) unreadable interrupted file\(quarantinedCount == 1 ? "" : "s") in Watch storage for diagnostics.")
-                }
-                if failedCount > 0 {
-                    notices.append("\(failedCount) interrupted file\(failedCount == 1 ? "" : "s") still need attention.")
-                }
-                if partialPackages.count > packagesToAudit.count {
-                    notices.append("More interrupted packages remain for a later audit.")
-                }
-                if !notices.isEmpty {
-                    self?.recoveryNotice = notices.joined(separator: " ")
-                }
+                self.recoveryLog = entries
+                await self.refreshRecoveryAggregate()
             } catch {
-                self?.recoveryNotice = "Interrupted session storage could not be checked. Try again later."
+                self.recoveryMessage = "Recovery could not start: \(error.localizedDescription)"
             }
         }
     }
@@ -777,6 +985,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         countdownTask?.cancel()
         countdownTask = nil
         motionCapture.stop()
+        cancelFinishingWatchdog()
         session = nil
         builder = nil
         packageWriter = nil
