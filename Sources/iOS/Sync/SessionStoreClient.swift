@@ -90,7 +90,12 @@ public actor SessionStoreClient {
         let (data, response) = try await session.data(for: authorizedRequest(url: url))
         try validate(response)
         do {
-            return try decoder.decode([MetaV1].self, from: data)
+            // The Worker wraps the array: {"packages": [...]}. Decode the
+            // wrapper, not a bare array, or the payload JSON is rejected.
+            struct ListResponse: Decodable, Sendable {
+                let packages: [MetaV1]
+            }
+            return try decoder.decode(ListResponse.self, from: data).packages
         } catch {
             throw SessionStoreErrorV1.decode(error)
         }
