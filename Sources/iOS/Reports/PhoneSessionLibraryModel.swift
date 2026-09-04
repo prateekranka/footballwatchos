@@ -104,16 +104,26 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var pipelineLastPushedUTC: Date?
     /// Last pipeline push failure, if any.
     @Published private(set) var pipelineLastError: String?
+    /// Number of vault sessions waiting to upload to the R2 session store.
+    @Published private(set) var outboxPendingCount = 0
+    /// Number of vault sessions uploaded to the R2 session store.
+    @Published private(set) var outboxPushedCount = 0
+    /// Last R2 session-store upload failure, if any.
+    @Published private(set) var outboxLastError: String?
 
     private let repository: FileSessionRepository?
     private let diagnosticRepository: PhoneDiagnosticRepository?
     private let pipelinePushService: PipelinePushService?
+    private let sessionPushOutbox: SessionPushOutbox?
     private var notificationObservers: [NSObjectProtocol] = []
+
+    var outboxAvailable: Bool { sessionPushOutbox != nil }
 
     init(runtime: PhoneTransferRuntime = .shared) {
         self.repository = runtime.repository
         self.diagnosticRepository = runtime.diagnosticRepository
         self.pipelinePushService = runtime.pipelinePushService
+        self.sessionPushOutbox = runtime.sessionPushOutbox
         self.message = runtime.startupErrorDescription.map { _ in
             "Local iPhone storage is unavailable. No session status can be shown."
         }
@@ -121,7 +131,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
         let receivedName = PhoneWatchConnectivityCoordinator.sessionReceivedNotification
         let importedName = PhoneWatchConnectivityCoordinator.sessionImportedNotification
         let progressName = PipelinePushService.progressDidChange
-        for name in [receivedName, importedName, progressName] {
+        let outboxProgressName = SessionPushOutbox.didChange
+        for name in [receivedName, importedName, progressName, outboxProgressName] {
             let token = NotificationCenter.default.addObserver(
                 forName: name,
                 object: nil,
@@ -144,6 +155,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
             await refresh()
         case PipelinePushService.progressDidChange:
             await refreshPipelineProgress()
+        case SessionPushOutbox.didChange:
+            await refreshOutboxProgress()
         default:
             break
         }
@@ -165,6 +178,7 @@ final class PhoneSessionLibraryModel: ObservableObject {
             watchDiagnostics = await diagnosticRepository.reports()
         }
         await refreshPipelineProgress()
+        await refreshOutboxProgress()
         if let selectedID = selectedDetail?.record.sessionID {
             await loadDetail(for: selectedID, clearMessage: false)
         }
@@ -180,6 +194,15 @@ final class PhoneSessionLibraryModel: ObservableObject {
         pipelineLastError = progress.lastError
     }
 
+    /// Reads durable R2 session-store progress into the published banner state.
+    func refreshOutboxProgress() async {
+        guard let sessionPushOutbox else { return }
+        let progress = await sessionPushOutbox.progress()
+        outboxPendingCount = progress.pendingCount
+        outboxPushedCount = progress.pushedCount
+        outboxLastError = progress.lastError
+    }
+
     func loadDetail(for sessionID: UUID, clearMessage: Bool = true) async {
         guard let repository else { return }
         if clearMessage { message = nil }
@@ -187,7 +210,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
             selectedDetail = try await repository.detail(for: sessionID)
             exportURL = nil
         } catch {
-            message = "This iPhone copy could not be read. It has not been exported."
+            let shortID = sessionID.uuidString.lowercased().prefix(8)
+            message = "Session \(shortID) could not be read: \(String(describing: error))."
         }
     }
 
@@ -198,7 +222,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
             exportURL = try await repository.verifiedExportURL(for: sessionID)
         } catch {
             exportURL = nil
-            message = "The stored package no longer matches its recorded digest, so export is unavailable."
+            let shortID = sessionID.uuidString.lowercased().prefix(8)
+            message = "Session \(shortID) could not be read: \(String(describing: error))."
         }
     }
 

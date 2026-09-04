@@ -8,11 +8,13 @@ struct SessionLibraryView: View {
         VStack(spacing: 0) {
             SyncStatusBanner(
                 vaultCount: model.sessions.count,
-                pushedCount: model.pipelinePushedCount,
+                outboxAvailable: model.outboxAvailable,
+                outboxPendingCount: model.outboxPendingCount,
+                pushedCount: model.outboxAvailable ? model.outboxPushedCount : model.pipelinePushedCount,
                 isReceiving: model.isReceivingFromWatch,
                 isRefreshing: model.isLoading,
-                lastPushedUTC: model.pipelineLastPushedUTC,
-                lastError: model.pipelineLastError
+                lastPushedUTC: model.outboxAvailable ? nil : model.pipelineLastPushedUTC,
+                lastError: model.outboxAvailable ? model.outboxLastError : model.pipelineLastError
             )
 
             Group {
@@ -42,6 +44,8 @@ struct SessionLibraryView: View {
 /// Shows the state of the Watch-to-iPhone-to-server sync as a progress bar.
 private struct SyncStatusBanner: View {
     let vaultCount: Int
+    let outboxAvailable: Bool
+    let outboxPendingCount: Int
     let pushedCount: Int
     let isReceiving: Bool
     let isRefreshing: Bool
@@ -66,7 +70,9 @@ private struct SyncStatusBanner: View {
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: Double(pushedCount), total: Double(max(vaultCount, 1)))
                 HStack {
-                    Text("Server sync: \(pushedCount) of \(vaultCount) uploaded")
+                    Text(outboxAvailable
+                        ? "R2 sync: \(pushedCount) of \(vaultCount) uploaded, \(outboxPendingCount) pending"
+                        : "Server sync: \(pushedCount) of \(vaultCount) uploaded")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -80,7 +86,7 @@ private struct SyncStatusBanner: View {
                     }
                 }
                 if let lastError {
-                    Text("Pipeline: \(lastError)")
+                    Text(outboxAvailable ? "R2: \(lastError)" : "Pipeline: \(lastError)")
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .lineLimit(2)
@@ -93,7 +99,9 @@ private struct SyncStatusBanner: View {
             .padding(.horizontal)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Server sync: \(pushedCount) of \(vaultCount) uploaded")
+            .accessibilityLabel(outboxAvailable
+                ? "R2 sync: \(pushedCount) of \(vaultCount) uploaded, \(outboxPendingCount) pending"
+                : "Server sync: \(pushedCount) of \(vaultCount) uploaded")
         }
     }
 }

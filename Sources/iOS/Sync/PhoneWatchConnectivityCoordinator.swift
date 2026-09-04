@@ -125,9 +125,18 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     func reconcileAndRequeueAtStartup() {
         let repository = repository
-        Task { [weak self, repository] in
+        let outbox = sessionPushOutbox
+        Task { [weak self, repository, outbox] in
             do {
                 try await repository.reconcileOnStartup()
+                let sessions = await repository.sessions()
+                for session in sessions {
+                    await outbox.enqueue(
+                        sessionID: session.sessionID,
+                        repository: repository
+                    )
+                }
+                Task { await outbox.retryAll() }
                 self?.requeueDurableReceipts()
             } catch {
                 let failureDescription = String(describing: error)
@@ -185,6 +194,7 @@ final class PhoneTransferRuntime: @unchecked Sendable {
     let repository: FileSessionRepository?
     let diagnosticRepository: PhoneDiagnosticRepository?
     let pipelinePushService: PipelinePushService?
+    let sessionPushOutbox: SessionPushOutbox?
     private let coordinator: PhoneWatchConnectivityCoordinator?
     let startupErrorDescription: String?
 
@@ -200,6 +210,7 @@ final class PhoneTransferRuntime: @unchecked Sendable {
             self.repository = repository
             self.diagnosticRepository = diagnosticRepository
             self.pipelinePushService = pipelinePushService
+            self.sessionPushOutbox = sessionPushOutbox
             self.coordinator = PhoneWatchConnectivityCoordinator(
                 repository: repository,
                 diagnosticRepository: diagnosticRepository,
@@ -212,6 +223,7 @@ final class PhoneTransferRuntime: @unchecked Sendable {
             self.repository = nil
             self.diagnosticRepository = nil
             self.pipelinePushService = nil
+            self.sessionPushOutbox = nil
             self.coordinator = nil
             self.startupErrorDescription = String(describing: error)
         }
