@@ -67,3 +67,9 @@ SDK builds do not establish those claims.
 
 The staged roadmap and ticket source of truth live in
 `.scratch/footy-watch-v1/`.
+
+## Phase 2
+
+The iPhone can upload, download, inspect, and list `.footysession` packages in the reachable R2 store.
+Imports enqueue in a durable local outbox and retry without deleting vault files.
+The bearer token belongs in the gitignored `SessionStoreCredentials.swift` file.

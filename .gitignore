@@ -6,3 +6,5 @@ xcuserdata/
 .swiftpm/
 FootballPerformance.xcodeproj/
 .asc/artifacts/
+Sources/iOS/Sync/SessionStoreCredentials.swift
+Sources/iOS/Sync/SessionStoreCredentials.template.swift

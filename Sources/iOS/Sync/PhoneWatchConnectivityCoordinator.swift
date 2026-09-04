@@ -17,6 +17,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     private let repository: FileSessionRepository
     private let diagnosticRepository: PhoneDiagnosticRepository
     private let pipelinePushService: PipelinePushService
+    private let sessionPushOutbox: SessionPushOutbox
     private let configuration: FileSessionRepository.Configuration
     private let session: WCSession
 
@@ -25,11 +26,13 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         diagnosticRepository: PhoneDiagnosticRepository,
         configuration: FileSessionRepository.Configuration,
         pipelinePushService: PipelinePushService = PipelinePushService(),
+        sessionPushOutbox: SessionPushOutbox = SessionPushOutbox(),
         session: WCSession = .default
     ) {
         self.repository = repository
         self.diagnosticRepository = diagnosticRepository
         self.pipelinePushService = pipelinePushService
+        self.sessionPushOutbox = sessionPushOutbox
         self.configuration = configuration
         self.session = session
         super.init()
@@ -135,19 +138,15 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     private func importStagedDelivery(_ deliveryID: String) {
         let repository = repository
-        let pushService = pipelinePushService
-        Task { [weak self, repository, pushService] in
+        let outbox = sessionPushOutbox
+        Task { [weak self, repository, outbox] in
             let outcome = await repository.importStaged(deliveryID: deliveryID)
             guard let payload = outcome.receiptPayload else { return }
             self?.queueReceipt(payload)
-            // After the durable import receipt, relay the package and its
-            // analytics to the health pipeline (app-native push).
             if case let .imported(record, _) = outcome {
                 NotificationCenter.default.post(name: Self.sessionImportedNotification, object: nil)
-                await pushService.pushImportedSession(
-                    sessionID: record.sessionID,
-                    repository: repository
-                )
+                await outbox.enqueue(sessionID: record.sessionID, repository: repository)
+                Task { await outbox.pushOne() }
             }
         }
     }
@@ -197,6 +196,7 @@ final class PhoneTransferRuntime: @unchecked Sendable {
                 rootDirectory: configuration.rootDirectory
             )
             let pipelinePushService = PipelinePushService()
+            let sessionPushOutbox = SessionPushOutbox(repository: repository)
             self.repository = repository
             self.diagnosticRepository = diagnosticRepository
             self.pipelinePushService = pipelinePushService
@@ -204,7 +204,8 @@ final class PhoneTransferRuntime: @unchecked Sendable {
                 repository: repository,
                 diagnosticRepository: diagnosticRepository,
                 configuration: configuration,
-                pipelinePushService: pipelinePushService
+                pipelinePushService: pipelinePushService,
+                sessionPushOutbox: sessionPushOutbox
             )
             self.startupErrorDescription = nil
         } catch {
