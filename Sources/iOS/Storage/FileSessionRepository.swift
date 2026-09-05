@@ -698,6 +698,21 @@ public actor FileSessionRepository {
         packageURL(sessionID: record.sessionID, digest: record.packageDigest)
     }
 
+    /// Read-only path of the stored package for a session. Callers still
+    /// receive integrity-verified reads from every accessor that returns
+    /// bytes; this exists so bounded presentation scans can target the file
+    /// without copying or re-hashing it first.
+    public func packageLocation(for sessionID: UUID) throws -> URL {
+        guard let record = index.entries.first(where: { $0.sessionID == sessionID }) else {
+            throw RepositoryError.sessionNotFound
+        }
+        let url = packageURL(for: record)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw RepositoryError.sessionNotFound
+        }
+        return url
+    }
+
     private func packageURL(sessionID: UUID, digest: SessionDigestV1) -> URL {
         packagesDirectory
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)

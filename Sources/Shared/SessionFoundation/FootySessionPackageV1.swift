@@ -458,12 +458,245 @@ public enum FootySessionPackageV1 {
         }
     }
 
+    /// One bounded sample retained by `scanBoundedSnapshots(of:)`.
+    public struct SnapshotSampleV1: Sendable, Equatable {
+        public let timestamp: Date
+        public let value: Double
+
+        public init(timestamp: Date, value: Double) {
+            self.timestamp = timestamp
+            self.value = value
+        }
+    }
+
+    /// The result of a bounded snapshot scan: summary payloads a list view
+    /// can afford, with strict caps and explicit truncation flags.
+    public struct SessionPackageSnapshotScanV1: Sendable, Equatable {
+        public let envelope: SessionEnvelopeV1?
+        public let completion: SessionCompletionV1?
+        public let status: SessionPackageReadStatusV1
+        public let frameCount: Int
+        public let heartRateSnapshots: [SnapshotSampleV1]
+        public let distanceSnapshots: [SnapshotSampleV1]
+        public let diagnostics: [CaptureDiagnosticsV1]
+        public let heartRateTruncated: Bool
+        public let distanceTruncated: Bool
+        public let diagnosticsTruncated: Bool
+
+        public init(
+            envelope: SessionEnvelopeV1?,
+            completion: SessionCompletionV1?,
+            status: SessionPackageReadStatusV1,
+            frameCount: Int,
+            heartRateSnapshots: [SnapshotSampleV1],
+            distanceSnapshots: [SnapshotSampleV1],
+            diagnostics: [CaptureDiagnosticsV1],
+            heartRateTruncated: Bool,
+            distanceTruncated: Bool,
+            diagnosticsTruncated: Bool
+        ) {
+            self.envelope = envelope
+            self.completion = completion
+            self.status = status
+            self.frameCount = frameCount
+            self.heartRateSnapshots = heartRateSnapshots
+            self.distanceSnapshots = distanceSnapshots
+            self.diagnostics = diagnostics
+            self.heartRateTruncated = heartRateTruncated
+            self.distanceTruncated = distanceTruncated
+            self.diagnosticsTruncated = diagnosticsTruncated
+        }
+    }
+
+    /// Bounded-memory snapshot scan for presentation surfaces.
+    ///
+    /// Walks the package with the same header, integrity, sequence, and
+    /// torn-tail semantics as `read(from:)`, but decodes only envelope,
+    /// completion, heart-rate, distance, and capture-diagnostics frames.
+    /// Accelerometer and device-motion batch frames are integrity-checked
+    /// and dropped without decoding, so peak memory stays at one frame plus
+    /// the capped retained samples. This is the only package-reading path a
+    /// session row, fingerprint, or trend summary may use; full detail
+    /// decoding remains the Session detail screen's job.
+    public static func scanBoundedSnapshots(
+        of url: URL,
+        limits: SessionPackageReaderLimitsV1 = .default,
+        heartRateLimit: Int = 12_000,
+        distanceLimit: Int = 12_000,
+        diagnosticLimit: Int = 64
+    ) throws -> SessionPackageSnapshotScanV1 {
+        try validateReaderLimits(limits)
+        precondition(heartRateLimit > 0 && distanceLimit > 0 && diagnosticLimit > 0)
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var wholeFileHasher = SHA256()
+        let header = try readUpTo(headerByteCount, from: handle, hasher: &wholeFileHasher)
+        guard header.count == headerByteCount else {
+            throw SessionPackageError.truncatedHeader
+        }
+        try validateHeader(header)
+
+        var envelope: SessionEnvelopeV1?
+        var completion: SessionCompletionV1?
+        var heartRate: [SnapshotSampleV1] = []
+        var distance: [SnapshotSampleV1] = []
+        var diagnostics: [CaptureDiagnosticsV1] = []
+        var heartRateTruncated = false
+        var distanceTruncated = false
+        var diagnosticsTruncated = false
+        var frameCount = 0
+        var sawCompletion = false
+
+        while true {
+            // Frame walk: identical framing rules to `scanNextFrame`, with
+            // kind-selective decoding. Everything frame-sized lives in one
+            // autorelease pool drained per frame.
+            let step: FrameWalkStep = try autoreleasepool {
+                let lengthData = try readUpTo(4, from: handle, hasher: &wholeFileHasher)
+                if lengthData.isEmpty { return .end }
+                guard lengthData.count == 4 else { return .torn }
+                let declaredLength = lengthData.uint32BigEndian(at: 0)
+                guard declaredLength > 0 else {
+                    throw SessionPackageError.invalidFrameLength(declaredLength)
+                }
+                guard frameLength(declaredLength, isWithin: limits) else {
+                    throw SessionPackageError.frameTooLarge(
+                        declared: declaredLength,
+                        limit: limits.maximumFrameBytes
+                    )
+                }
+                guard frameCount < limits.maximumFrameCount else {
+                    throw SessionPackageError.tooManyFrames(limit: limits.maximumFrameCount)
+                }
+
+                let frameData = try readUpTo(Int(declaredLength), from: handle, hasher: &wholeFileHasher)
+                guard frameData.count == Int(declaredLength) else { return .torn }
+                let integrity = try readUpTo(frameDigestByteCount, from: handle, hasher: &wholeFileHasher)
+                guard integrity.count == frameDigestByteCount else { return .torn }
+                guard integrity == Data(SHA256.hash(data: frameData)) else {
+                    throw SessionPackageError.corruptFrameIntegrity(index: frameCount)
+                }
+
+                let kind: SessionFrameKindV1
+                do {
+                    kind = try binaryPlistFrameKind(in: frameData)
+                } catch {
+                    throw SessionPackageError.corruptFrame(index: frameCount)
+                }
+                try validateFrameKind(kind, at: frameCount, sawCompletion: sawCompletion)
+
+                switch kind {
+                case .envelope, .completion, .heartRateSnapshot, .distanceSnapshot, .captureDiagnostics:
+                    let frame: FootySessionFrameV1
+                    do {
+                        frame = try PropertyListDecoder().decode(FootySessionFrameV1.self, from: frameData)
+                    } catch {
+                        throw SessionPackageError.corruptFrame(index: frameCount)
+                    }
+                    return .decoded(kind, frame.payload)
+                case .accelerometerBatch, .deviceMotionBatch, .sprintBatch, .qualityEvent:
+                    // Not needed for presentation; skipped without decoding.
+                    return .skipped(kind)
+                }
+            }
+
+            switch step {
+            case .end:
+                let status: SessionPackageReadStatusV1 = sawCompletion ? .complete : .incomplete
+                return SessionPackageSnapshotScanV1(
+                    envelope: envelope,
+                    completion: completion,
+                    status: status,
+                    frameCount: frameCount,
+                    heartRateSnapshots: heartRate,
+                    distanceSnapshots: distance,
+                    diagnostics: diagnostics,
+                    heartRateTruncated: heartRateTruncated,
+                    distanceTruncated: distanceTruncated,
+                    diagnosticsTruncated: diagnosticsTruncated
+                )
+            case .torn:
+                // A torn tail ends the walk immediately: the reader cannot
+                // trust framing past the interrupted frame.
+                return SessionPackageSnapshotScanV1(
+                    envelope: envelope,
+                    completion: completion,
+                    status: .tornTail,
+                    frameCount: frameCount,
+                    heartRateSnapshots: heartRate,
+                    distanceSnapshots: distance,
+                    diagnostics: diagnostics,
+                    heartRateTruncated: heartRateTruncated,
+                    distanceTruncated: distanceTruncated,
+                    diagnosticsTruncated: diagnosticsTruncated
+                )
+            case let .decoded(kind, payload):
+                switch payload {
+                case let .envelope(value):
+                    envelope = value
+                case let .completion(value):
+                    completion = value
+                    sawCompletion = true
+                case let .heartRateSnapshot(value):
+                    if heartRate.count < heartRateLimit {
+                        heartRate.append(
+                            SnapshotSampleV1(
+                                timestamp: value.timestamp,
+                                value: value.beatsPerMinute.value
+                            )
+                        )
+                    } else {
+                        heartRateTruncated = true
+                    }
+                case let .distanceSnapshot(value):
+                    if distance.count < distanceLimit {
+                        distance.append(
+                            SnapshotSampleV1(
+                                timestamp: value.timestamp,
+                                value: value.meters.value
+                            )
+                        )
+                    } else {
+                        distanceTruncated = true
+                    }
+                case let .captureDiagnostics(value):
+                    if diagnostics.count < diagnosticLimit {
+                        diagnostics.append(value)
+                    } else {
+                        diagnosticsTruncated = true
+                    }
+                default:
+                    break
+                }
+                if kind == .completion {
+                    sawCompletion = true
+                }
+                frameCount += 1
+            case let .skipped(kind):
+                if kind == .completion {
+                    // Unreachable: completion frames are always decoded. Kept
+                    // for exhaustiveness so a kind split above stays honest.
+                    sawCompletion = true
+                }
+                frameCount += 1
+            }
+        }
+    }
+
+    private enum FrameWalkStep {
+        case end
+        case torn
+        case decoded(SessionFrameKindV1, SessionFramePayloadV1)
+        case skipped(SessionFrameKindV1)
+    }
+
     private enum ScanFrameStep {
         case end
         case torn
         case frame(SessionFrameKindV1, SessionEnvelopeV1?, SessionCompletionV1?, Date?)
     }
-
     private static func scanNextFrame(
         from source: FileHandle,
         hasher: inout SHA256,
