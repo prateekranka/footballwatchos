@@ -11,6 +11,7 @@ struct SessionLibraryView: View {
                 outboxAvailable: model.outboxAvailable,
                 outboxPendingCount: model.outboxPendingCount,
                 pushedCount: model.outboxAvailable ? model.outboxPushedCount : model.pipelinePushedCount,
+                progressDetail: model.outboxAvailable ? model.outboxProgressDetail : nil,
                 isReceiving: model.isReceivingFromWatch,
                 isRefreshing: model.isLoading,
                 lastPushedUTC: model.outboxAvailable ? nil : model.pipelineLastPushedUTC,
@@ -47,10 +48,21 @@ private struct SyncStatusBanner: View {
     let outboxAvailable: Bool
     let outboxPendingCount: Int
     let pushedCount: Int
+    let progressDetail: String?
     let isReceiving: Bool
     let isRefreshing: Bool
     let lastPushedUTC: Date?
     let lastError: String?
+
+    private var syncText: String {
+        let base = outboxAvailable
+            ? "R2 sync: \(pushedCount) of \(vaultCount) uploaded, \(outboxPendingCount) pending"
+            : "Server sync: \(pushedCount) of \(vaultCount) uploaded"
+        if let progressDetail {
+            return base + " (\(progressDetail))"
+        }
+        return base
+    }
 
     var body: some View {
         if isReceiving || (vaultCount == 0 && isRefreshing) {
@@ -70,9 +82,7 @@ private struct SyncStatusBanner: View {
             VStack(alignment: .leading, spacing: 6) {
                 ProgressView(value: Double(pushedCount), total: Double(max(vaultCount, 1)))
                 HStack {
-                    Text(outboxAvailable
-                        ? "R2 sync: \(pushedCount) of \(vaultCount) uploaded, \(outboxPendingCount) pending"
-                        : "Server sync: \(pushedCount) of \(vaultCount) uploaded")
+                    Text(syncText)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -99,9 +109,7 @@ private struct SyncStatusBanner: View {
             .padding(.horizontal)
             .padding(.top, 8)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(outboxAvailable
-                ? "R2 sync: \(pushedCount) of \(vaultCount) uploaded, \(outboxPendingCount) pending"
-                : "Server sync: \(pushedCount) of \(vaultCount) uploaded")
+            .accessibilityLabel(syncText)
         }
     }
 }

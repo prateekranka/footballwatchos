@@ -110,6 +110,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var outboxPushedCount = 0
     /// Last R2 session-store upload failure, if any.
     @Published private(set) var outboxLastError: String?
+    /// In-flight chunked-upload progress (e.g. "part 12 of 69"), if any.
+    @Published private(set) var outboxProgressDetail: String?
 
     private let repository: FileSessionRepository?
     private let diagnosticRepository: PhoneDiagnosticRepository?
@@ -201,6 +203,7 @@ final class PhoneSessionLibraryModel: ObservableObject {
         outboxPendingCount = progress.pendingCount
         outboxPushedCount = progress.pushedCount
         outboxLastError = progress.lastError
+        outboxProgressDetail = progress.uploadDetail
     }
 
     func loadDetail(for sessionID: UUID, clearMessage: Bool = true) async {

@@ -4,6 +4,7 @@ public struct SessionPushProgressV1: Sendable, Equatable {
     public let pendingCount: Int
     public let pushedCount: Int
     public let lastError: String?
+    public let uploadDetail: String?
 }
 
 public actor SessionPushOutbox {
@@ -16,6 +17,7 @@ public actor SessionPushOutbox {
         var pushed: [UUID] = []
         var lastPushedUTC: Date?
         var lastError: String?
+        var uploadDetail: String?
     }
 
     private let client: SessionStoreClient
@@ -45,20 +47,41 @@ public actor SessionPushOutbox {
     public func pushOne() async {
         guard let sessionID = state.pending.first, let repository else { return }
         do {
-            let detail = try await repository.detail(for: sessionID)
+            // Read only the index record (digest + byte count) and the stored
+            // file URL. Never fully decode the package here: a game package
+            // expands to ~1 GB of samples in memory.
+            let records = await repository.sessions()
+            guard let record = records.first(where: { $0.sessionID == sessionID }) else {
+                throw SessionStoreErrorV1.sessionMissing
+            }
             let exportURL = try await repository.verifiedExportURL(for: sessionID)
-            let package = try Data(contentsOf: exportURL)
-            try await client.uploadPackage(
-                sessionID: sessionID,
-                digest: detail.record.packageDigest,
-                package: package
-            )
+            let byteCount = Int(record.byteCount)
+            if byteCount > SessionStoreClient.chunkedThresholdBytes {
+                try await client.uploadPackageChunked(
+                    sessionID: sessionID,
+                    digest: record.packageDigest,
+                    fileURL: exportURL,
+                    byteCount: byteCount,
+                    progress: { [weak self] sent, total in
+                        Task { await self?.noteProgress(sent: sent, total: total) }
+                    }
+                )
+            } else {
+                let package = try Data(contentsOf: exportURL)
+                try await client.uploadPackage(
+                    sessionID: sessionID,
+                    digest: record.packageDigest,
+                    package: package
+                )
+            }
             state.pending.removeFirst()
             if !state.pushed.contains(sessionID) { state.pushed.append(sessionID) }
             state.lastPushedUTC = Date()
             state.lastError = nil
+            state.uploadDetail = nil
         } catch {
             state.lastError = String(describing: error)
+            state.uploadDetail = nil
         }
         saveState()
         Self.postChange()
@@ -68,7 +91,8 @@ public actor SessionPushOutbox {
         SessionPushProgressV1(
             pendingCount: state.pending.count,
             pushedCount: state.pushed.count,
-            lastError: state.lastError
+            lastError: state.lastError,
+            uploadDetail: state.uploadDetail
         )
     }
 
@@ -82,6 +106,12 @@ public actor SessionPushOutbox {
 
     private func saveState() {
         try? Self.save(state, to: stateURL)
+    }
+
+    private func noteProgress(sent: Int, total: Int) {
+        state.uploadDetail = "part \(sent) of \(total)"
+        saveState()
+        Self.postChange()
     }
 
     private static func postChange() {
