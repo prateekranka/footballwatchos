@@ -14,7 +14,7 @@ struct FootballPerformanceApp: App {
 
     var body: some Scene {
         WindowGroup {
-            CompanionHomeView()
+            RootTabView()
                 .environmentObject(library)
         }
     }

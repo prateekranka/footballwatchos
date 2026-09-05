@@ -117,7 +117,15 @@ final class PhoneSessionLibraryModel: ObservableObject {
     private let diagnosticRepository: PhoneDiagnosticRepository?
     private let pipelinePushService: PipelinePushService?
     private let sessionPushOutbox: SessionPushOutbox?
+    private let previewStore: SessionPreviewStore
     private var notificationObservers: [NSObjectProtocol] = []
+
+    /// Derived per-session visuals keyed by session ID. Computed off the
+    /// main actor from bounded package scans and cached by digest.
+    @Published private(set) var visualSummaries: [UUID: SessionVisualSummary] = [:]
+
+    /// True when local storage could not be opened at all.
+    var repositoryUnavailable: Bool { repository == nil }
 
     var outboxAvailable: Bool { sessionPushOutbox != nil }
 
@@ -126,6 +134,7 @@ final class PhoneSessionLibraryModel: ObservableObject {
         self.diagnosticRepository = runtime.diagnosticRepository
         self.pipelinePushService = runtime.pipelinePushService
         self.sessionPushOutbox = runtime.sessionPushOutbox
+        self.previewStore = SessionPreviewStore()
         self.message = runtime.startupErrorDescription.map { _ in
             "Local iPhone storage is unavailable. No session status can be shown."
         }
@@ -204,6 +213,42 @@ final class PhoneSessionLibraryModel: ObservableObject {
         outboxPushedCount = progress.pushedCount
         outboxLastError = progress.lastError
         outboxProgressDetail = progress.uploadDetail
+    }
+
+    /// Re-enqueues every waiting backup upload.
+    func retryPendingUploads() async {
+        guard let sessionPushOutbox else { return }
+        await sessionPushOutbox.retryAll()
+        await refreshOutboxProgress()
+    }
+
+    /// Prepares derived visuals for the newest sessions. The featured card
+    /// gets the first budget; older rows compute on demand when shown.
+    func prepareVisualSummaries(budget: Int = 1) async {
+        guard let repository, !sessions.isEmpty else { return }
+        await previewStore.prepare(
+            records: sessions,
+            repository: repository,
+            budget: budget
+        )
+        visualSummaries = await previewStore.snapshot()
+    }
+
+    /// Requests the visual summary for one visible row, computed at utility
+    /// priority so scrolling never waits on package scans.
+    func requestVisualSummary(for sessionID: UUID) {
+        guard let repository,
+              let record = sessions.first(where: { $0.sessionID == sessionID }),
+              visualSummaries[sessionID] == nil else {
+            return
+        }
+        Task(priority: .utility) {
+            await previewStore.prepare(records: [record], repository: repository, budget: 1)
+            let snapshot = await previewStore.snapshot()
+            if !snapshot.isEmpty {
+                visualSummaries = snapshot
+            }
+        }
     }
 
     func loadDetail(for sessionID: UUID, clearMessage: Bool = true) async {

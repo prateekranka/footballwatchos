@@ -96,7 +96,7 @@ enum ChartPreparationV1 {
             chosen.append(run[index])
             index += stride
         }
-        if chosen.last !== run[run.count - 1] {
+        if chosen.last?.timestamp != run[run.count - 1].timestamp {
             chosen.append(run[run.count - 1])
         }
         return chosen

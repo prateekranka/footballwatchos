@@ -82,12 +82,14 @@ actor SessionPreviewStore {
             inFlight.insert(record.sessionID)
             // Disk sidecar first; a previous launch may already have paid
             // for this scan.
-            let cached = readSidecar(sessionID: record.sessionID, digestHex: record.packageDigest.hexString)
-            let summary = cached ?? await computeSummary(for: record, repository: repository)
+            var summary = readSidecar(sessionID: record.sessionID, digestHex: record.packageDigest.hexString)
+            if summary == nil {
+                summary = await computeSummary(for: record, repository: repository)
+            }
             inFlight.remove(record.sessionID)
             if let summary {
                 inMemory[summary.sessionID] = summary
-                if cached == nil {
+                if readSidecar(sessionID: summary.sessionID, digestHex: summary.packageDigestHex) == nil {
                     writeSidecar(summary)
                 }
             }
