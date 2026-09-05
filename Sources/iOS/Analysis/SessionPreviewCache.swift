@@ -24,7 +24,7 @@ struct SessionVisualSummary: Codable, Equatable, Sendable {
     let computedAt: Date
 
     /// Bumped whenever derived presentation rules change.
-    static let currentAnalysisVersion = 1
+    static let currentAnalysisVersion = 2
 }
 
 /// Computes and caches `SessionVisualSummary` values off the main actor.

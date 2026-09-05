@@ -105,8 +105,8 @@ struct SessionFingerprintTests {
 
     // MARK: - Observations
 
-    @Test("a fully covered session yields a busiest-stretch observation with a valid minute range")
-    func busiestStretchFullyCovered() throws {
+    @Test("a perfectly flat session has no distinguishable busiest stretch")
+    func busiestStretchFlatSession() throws {
         let samples = Self.samples(count: 72)
         let fingerprint = try #require(
             SessionFingerprintV1.build(
@@ -115,10 +115,33 @@ struct SessionFingerprintTests {
                 endedAt: Self.startedAt.addingTimeInterval(4_320)
             )
         )
+        // Nothing sits above the session's own trend, so no claim is made.
+        #expect(SessionObservationEngineV1.busiestStretch(from: fingerprint) == nil)
+    }
+
+    @Test("a burst above a rising trend wins over the trend itself")
+    func busiestStretchPrefersBurstOverDrift() throws {
+        // A session that rises linearly from 130 to 150 bpm with a 10-bpm,
+        // four-minute spike at minutes 34-37. The busiest stretch must land
+        // on the spike, not the naturally high session end.
+        let samples: [(timestamp: Date, beatsPerMinute: Double)] = (0...72).map { minute in
+            let drift = 130.0 + 20.0 * Double(minute) / 72.0
+            let spike = (34...37).contains(minute) ? 10.0 : 0.0
+            return (
+                Self.startedAt.addingTimeInterval(30 + Double(minute) * 60),
+                drift + spike
+            )
+        }
+        let fingerprint = try #require(
+            SessionFingerprintV1.build(
+                from: samples,
+                startedAt: Self.startedAt,
+                endedAt: Self.startedAt.addingTimeInterval(4_320)
+            )
+        )
         let observation = try #require(SessionObservationEngineV1.busiestStretch(from: fingerprint))
-        #expect(observation.minuteRange.lowerBound < observation.minuteRange.upperBound)
-        #expect(observation.minuteRange.lowerBound >= 0)
-        #expect(observation.minuteRange.upperBound <= fingerprint.durationMinutes)
+        #expect(observation.minuteRange.lowerBound >= 27)
+        #expect(observation.minuteRange.upperBound <= 42)
     }
 
     @Test("coverage below the minimum yields no observation")

@@ -188,9 +188,12 @@ struct SessionSyncSheet: View {
                                 }
                             }
                             if let error = model.outboxLastError {
-                                Label(error, systemImage: "exclamationmark.triangle.fill")
-                                    .font(.subheadline)
-                                    .foregroundStyle(PerformanceTheme.warning)
+                                Label(
+                                    Self.friendlyBackupError(error),
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.subheadline)
+                                .foregroundStyle(PerformanceTheme.warning)
                             }
                             Button {
                                 Task {
@@ -236,6 +239,24 @@ struct SessionSyncSheet: View {
                 }
             }
         }
+    }
+
+    /// Presents raw transport errors as sentences a reader can act on. The
+    /// original text stays in the durable outbox state; only the display
+    /// changes, and unknown errors pass through untouched.
+    static func friendlyBackupError(_ message: String) -> String {
+        if message.contains("401") || message.lowercased().contains("unauthorized") {
+            return "The backup service rejected access to this iPhone's credential."
+        }
+        if message.contains("404") {
+            return "The backup service could not be found for this session store."
+        }
+        if message.lowercased().contains("offline")
+            || message.lowercased().contains("network")
+            || message.lowercased().contains("connect") {
+            return "The backup service was unreachable. Your sessions remain safe on this iPhone."
+        }
+        return message
     }
 
     private func section<Content: View>(

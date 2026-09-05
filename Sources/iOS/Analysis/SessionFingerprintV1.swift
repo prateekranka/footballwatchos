@@ -110,26 +110,51 @@ enum SessionObservationEngineV1 {
     /// Picks the busiest observed stretch from heart-rate evidence.
     ///
     /// The busiest stretch is the window of `windowBins` consecutive bins
-    /// with the highest mean heart rate. Windows containing empty bins are
-    /// skipped, so a claim never rests on interpolated data. Returns `nil`
-    /// when coverage is too low or no full window has data.
+    /// that sits furthest above the session's own linear heart-rate trend.
+    /// Measuring against the trend, rather than raw means, stops a steadily
+    /// rising session from making every late window look like a burst.
+    /// Windows containing empty bins are skipped, so a claim never rests on
+    /// interpolated data. Returns `nil` when coverage is too low or no full
+    /// window sits above the trend.
     static func busiestStretch(from fingerprint: SessionFingerprintV1) -> SessionObservationV1? {
         guard fingerprint.coverage >= minimumCoverage else { return nil }
         let bins = fingerprint.bins
         guard bins.count >= windowBins else { return nil }
 
+        // Least-squares trend over the filled bins, positions normalized to
+        // 0...1 so minute length never changes the fit.
+        let filled = bins.enumerated().compactMap { index, value -> (position: Double, value: Double)? in
+            guard let value else { return nil }
+            let position = (Double(index) + 0.5) / Double(bins.count)
+            return (position, value)
+        }
+        guard filled.count >= windowBins else { return nil }
+        let count = Double(filled.count)
+        let meanPosition = filled.reduce(0) { $0 + $1.position } / count
+        let meanValue = filled.reduce(0) { $0 + $1.value } / count
+        let covariance = filled.reduce(0) { $0 + ($1.position - meanPosition) * ($1.value - meanValue) }
+        let variance = filled.reduce(0) { $0 + pow($1.position - meanPosition, 2) }
+        let slope = variance > 0 ? covariance / variance : 0
+        let intercept = meanValue - slope * meanPosition
+
         var bestRange: Range<Int>?
-        var bestMean: Double = 0
+        var bestResidual: Double = 0
         for start in 0...(bins.count - windowBins) {
             let window = bins[start..<(start + windowBins)]
             guard window.allSatisfy({ $0 != nil }) else { continue }
-            let mean = window.compactMap { $0 }.reduce(0, +) / Double(windowBins)
-            if bestRange == nil || mean > bestMean {
-                bestMean = mean
+            let residualSum = window.enumerated().reduce(0) { sum, pair in
+                let position = (Double(start + pair.offset) + 0.5) / Double(bins.count)
+                return sum + (pair.element! - (intercept + slope * position))
+            }
+            let meanResidual = residualSum / Double(windowBins)
+            if bestRange == nil || meanResidual > bestResidual {
+                bestResidual = meanResidual
                 bestRange = start..<(start + windowBins)
             }
         }
-        guard let range = bestRange else { return nil }
+        // A window must genuinely exceed the trend, not merely be the least
+        // below it.
+        guard let range = bestRange, bestResidual > 0 else { return nil }
 
         let binCount = Double(bins.count)
         let totalMinutes = fingerprint.durationMinutes
@@ -141,7 +166,7 @@ enum SessionObservationEngineV1 {
         let sentence = "The busiest observed stretch was between \(startMinute) and \(endMinute) minutes."
         return SessionObservationV1(
             minuteRange: startMinute...endMinute,
-            meanBeatsPerMinute: bestMean,
+            meanBeatsPerMinute: fingerprint.peakBeatsPerMinute,
             sentence: sentence
         )
     }

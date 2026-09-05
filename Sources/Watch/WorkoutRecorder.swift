@@ -149,6 +149,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 if success {
                     WatchLog.recorder.info("prepare: HealthKit authorization granted")
                     self.phase = .idle
+                    self.startUIQAAutomationIfRequested()
                 } else {
                     WatchLog.recorder.logError(
                         "prepare: HealthKit authorization denied",
@@ -159,6 +160,31 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             }
         }
     }
+
+    /// Simulator QA hook, DEBUG builds only. `FP_UI_QA_AUTOSTART=1` begins
+    /// the normal countdown without a tap so screenshots of the recording
+    /// flow can be captured headlessly. `FP_UI_QA_AUTOFINISH_SECONDS`
+    /// finishes an active session after that many seconds. Production
+    /// devices never set these variables, and Release builds omit the code.
+    #if DEBUG
+    private func startUIQAAutomationIfRequested() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["FP_UI_QA_AUTOSTART"] == "1" else { return }
+        WatchLog.recorder.info("ui-qa: autostart requested")
+        startCountdown()
+        if let finishAfter = environment["FP_UI_QA_AUTOFINISH_SECONDS"],
+           let seconds = TimeInterval(finishAfter), seconds > 0 {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(seconds))
+                guard let self, case .active = self.phase else { return }
+                WatchLog.recorder.info("ui-qa: autofinish requested")
+                self.finish()
+            }
+        }
+    }
+    #else
+    private func startUIQAAutomationIfRequested() {}
+    #endif
 
     func startCountdown() {
         guard phase == .idle else { return }

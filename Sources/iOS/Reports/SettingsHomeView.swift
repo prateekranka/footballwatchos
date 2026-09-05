@@ -66,7 +66,14 @@ struct SettingsHomeView: View {
         if gigabytes >= 1 {
             return String(format: "%.1f GB", gigabytes)
         }
-        return String(format: "%.0f MB", Double(totalBytes) / 1_000_000)
+        let megabytes = Double(totalBytes) / 1_000_000
+        if megabytes >= 10 {
+            return String(format: "%.0f MB", megabytes)
+        }
+        if megabytes >= 0.1 {
+            return String(format: "%.1f MB", megabytes)
+        }
+        return String(format: "%.0f KB", Double(totalBytes) / 1_000)
     }
 
     private var versionText: String {
