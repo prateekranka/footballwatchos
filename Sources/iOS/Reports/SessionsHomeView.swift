@@ -45,7 +45,7 @@ struct SessionsHomeView: View {
             }
         }
         .navigationDestination(for: UUID.self) { sessionID in
-            SessionDetailScreen(sessionID: sessionID)
+            SessionOverviewScreen(sessionID: sessionID)
         }
         .navigationDestination(isPresented: $showsAllSessions) {
             AllSessionsView()

@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Native destination shell. Sessions and Settings now; Progress joins as
-/// its own destination in the same redesign series. Session Overview is not
-/// a tab: it opens from a session row inside Sessions.
+/// Native destination shell: Sessions, Progress, Settings. Session Overview
+/// is not a tab; it opens from a session row inside Sessions.
 struct RootTabView: View {
     @EnvironmentObject private var library: PhoneSessionLibraryModel
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
@@ -18,6 +17,13 @@ struct RootTabView: View {
             }
             .tabItem {
                 Label("Sessions", systemImage: "figure.run")
+            }
+
+            NavigationStack {
+                ProgressHomeView()
+            }
+            .tabItem {
+                Label("Progress", systemImage: "chart.bar.xaxis")
             }
 
             NavigationStack {
