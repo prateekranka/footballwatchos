@@ -74,6 +74,24 @@ jobs:
           grep -E "error:|✘|failed|\*\* TEST|Test run with" build/test.log | head -200 || true
           exit $status
 
+      - name: E2E journeys
+        if: success() || failure()
+        run: |
+          set +e
+          xcodebuild test \
+            -project FootballPerformance.xcodeproj \
+            -scheme FootballPerformanceE2E \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/DD \
+            -resultBundlePath build/E2E.xcresult \
+            CODE_SIGNING_ALLOWED=NO > build/e2e.log 2>&1
+          status=$?
+          set -e
+          grep -E "error:|failed|passed|\*\* TEST|XCTAssert" build/e2e.log | head -200 || true
+          mkdir -p shots/e2e
+          xcrun xcresulttool export attachments --path build/E2E.xcresult --output-path shots/e2e || true
+          exit $status
+
       - name: Screenshots
         if: success() || failure()
         run: |
@@ -97,14 +115,14 @@ jobs:
             xcrun simctl io "$UDID" screenshot "shots/$name.png"
           }
           QA=(-FP_UI_QA YES -onboardingCompleted YES)
-          shoot 1-sessions-demo "${QA[@]}" -FP_QA_SCENARIO demo -FP_QA_TAB sessions
-          shoot 2-progress-demo "${QA[@]}" -FP_QA_SCENARIO demo -FP_QA_TAB progress
-          shoot 3-settings "${QA[@]}" -FP_QA_SCENARIO demo -FP_QA_TAB settings
+          shoot 1-sessions-coach "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB sessions
+          shoot 2-progress-coach "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB progress
+          shoot 3-settings "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB settings
           shoot 4-sessions-empty "${QA[@]}" -FP_QA_SCENARIO empty -FP_QA_TAB sessions
           shoot 5-onboarding -FP_UI_QA YES -onboardingCompleted NO
           xcrun simctl ui "$UDID" appearance dark
-          shoot 6-sessions-demo-dark "${QA[@]}" -FP_QA_SCENARIO demo -FP_QA_TAB sessions
-          shoot 7-progress-demo-dark "${QA[@]}" -FP_QA_SCENARIO demo -FP_QA_TAB progress
+          shoot 6-sessions-coach-dark "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB sessions
+          shoot 7-progress-coach-dark "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB progress
           ls -la shots
 
       - name: Publish screenshots to the ci-shots branch
@@ -112,7 +130,7 @@ jobs:
         run: |
           [ -d shots ] || exit 0
           SRC_SHA=$(git rev-parse --short HEAD)
-          cp build/test.log shots/test.log 2>/dev/null || true
+          cp build/test.log build/e2e.log shots/ 2>/dev/null || true
           cd shots
           git init -q
           git checkout -q -b ci-shots
@@ -123,10 +141,12 @@ jobs:
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-shots
 
       - name: Upload test results
-        if: failure()
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: |
             build/Tests.xcresult
-            build/test.log
+            build/E2E.xcresult
+            build/*.log
+            shots

@@ -155,12 +155,15 @@ final class PhoneSessionLibraryModel: ObservableObject {
     private var appliedLaunchScenario = false
 
     /// Loads the fixture named by the `FP_QA_SCENARIO` launch argument once,
-    /// so CI can screenshot populated screens without driving Settings.
+    /// so E2E runs and CI screenshots start from the same data every time.
+    /// The player profile is cleared too, so heart-rate zones start from
+    /// the estimated max until the run sets an age.
     func applyLaunchQAScenarioIfRequested() async {
         guard !appliedLaunchScenario,
               let name = UserDefaults.standard.string(forKey: "FP_QA_SCENARIO"),
               let scenario = QASessionScenario(rawValue: name) else { return }
         appliedLaunchScenario = true
+        UserDefaults.standard.removeObject(forKey: "playerAge")
         await setQAData(scenario)
     }
     #endif

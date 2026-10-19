@@ -104,6 +104,20 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Football Performance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Football Performance"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
+  FootballPerformanceE2E:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/E2E
+    dependencies:
+      - target: FootballPerformance
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.e2e
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: FootballPerformance
+
   FootballPerformanceWatchTests:
     type: bundle.unit-test
     platform: watchOS
@@ -154,6 +168,15 @@ schemes:
       config: Debug
       targets:
         - FootballPerformanceTests
+
+  FootballPerformanceE2E:
+    build:
+      targets:
+        FootballPerformanceE2E: all
+    test:
+      config: Debug
+      targets:
+        - FootballPerformanceE2E
 
   FootballPerformanceWatchTests:
     build:
