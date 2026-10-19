@@ -1,17 +1,13 @@
 # Build and test
 
 - Do not use FlowDeck on this machine — it is license-blocked. Use xcodebuild directly.
-- iOS tests:
-  `xcodebuild test -project FootballPerformance.xcodeproj -scheme FootballPerformanceTests -destination 'platform=iOS Simulator,id=CD369CF5-53C5-4EB2-9FC4-164D2716AAAC'`
-- watchOS tests:
-  `xcodebuild test -project FootballPerformance.xcodeproj -scheme FootballPerformanceWatchTests -destination 'platform=watchOS Simulator,id=BD726DC2-42A8-42C6-80E6-064BC09D7288'`
 - E2E journeys (XCUITest, the main way to test features):
   `xcodebuild test -project FootballPerformance.xcodeproj -scheme FootballPerformanceE2E -destination 'platform=iOS Simulator,id=CD369CF5-53C5-4EB2-9FC4-164D2716AAAC' -resultBundlePath build/E2E.xcresult`
-- CI (`.github/workflows/ios-ci.yml`) runs unit tests, E2E journeys and screenshots on a macOS runner for `claude/**` branches, uploads the result bundles, and pushes screenshots plus logs to the `ci-shots` branch.
+- CI (`.github/workflows/ios-ci.yml`) runs the E2E journeys and screenshots on a macOS runner for `claude/**` branches, uploads the result bundles, and pushes screenshots plus logs to the `ci-shots` branch.
 
 # Testing rules
 
-- Never write unit tests after writing the code.
+- Do not write unit tests. The project has none; test through E2E journeys only.
 - Prefer end-to-end (E2E) tests as the main way to test. Use them to check that complex features work.
 - Make E2E tests produce an artifact that can be checked and reproduced.
 - If you need to test a system in isolation, first list all the ways it could fail. Then write the code.

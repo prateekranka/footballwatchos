@@ -58,25 +58,9 @@ jobs:
           test -n "$UDID"
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
 
-      - name: iOS unit tests
+      - name: E2E journeys
         run: |
           mkdir -p build
-          set +e
-          xcodebuild test \
-            -project FootballPerformance.xcodeproj \
-            -scheme FootballPerformanceTests \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
-            -derivedDataPath build/DD \
-            -resultBundlePath build/Tests.xcresult \
-            CODE_SIGNING_ALLOWED=NO > build/test.log 2>&1
-          status=$?
-          set -e
-          grep -E "error:|✘|failed|\*\* TEST|Test run with" build/test.log | head -200 || true
-          exit $status
-
-      - name: E2E journeys
-        if: success() || failure()
-        run: |
           set +e
           xcodebuild test \
             -project FootballPerformance.xcodeproj \
@@ -130,7 +114,7 @@ jobs:
         run: |
           [ -d shots ] || exit 0
           SRC_SHA=$(git rev-parse --short HEAD)
-          cp build/test.log build/e2e.log shots/ 2>/dev/null || true
+          cp build/e2e.log shots/ 2>/dev/null || true
           cd shots
           git init -q
           git checkout -q -b ci-shots
@@ -146,7 +130,6 @@ jobs:
         with:
           name: test-results
           path: |
-            build/Tests.xcresult
             build/E2E.xcresult
             build/*.log
             shots

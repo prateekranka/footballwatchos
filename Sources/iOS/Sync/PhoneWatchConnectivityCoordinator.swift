@@ -202,12 +202,11 @@ final class PhoneTransferRuntime: @unchecked Sendable {
         do {
             var configuration = try FileSessionRepository.Configuration.applicationSupport()
             #if DEBUG && targetEnvironment(simulator)
-            let isUnitTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA") || isUnitTesting
+            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA")
             if isolatedTesting {
                 configuration = FileSessionRepository.Configuration(
                     rootDirectory: configuration.rootDirectory.deletingLastPathComponent()
-                        .appendingPathComponent(isUnitTesting ? "FootballPerformanceUnitTests" : "FootballPerformanceQA", isDirectory: true)
+                        .appendingPathComponent("FootballPerformanceQA", isDirectory: true)
                 )
             }
             #endif

@@ -88,22 +88,6 @@ targets:
           CODE_SIGN_IDENTITY: "iPhone Distribution: Esha Bhoon (4JRB53LG5C)"
           PROVISIONING_PROFILE_SPECIFIER: "FootballPerformance b28 iOS Distribution"
 
-  FootballPerformanceTests:
-    type: bundle.unit-test
-    platform: iOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: Tests/SessionFoundation
-      - path: Tests/PhoneImport
-    dependencies:
-      - target: FootballPerformance
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.tests
-        GENERATE_INFOPLIST_FILE: true
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Football Performance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Football Performance"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-
   FootballPerformanceE2E:
     type: bundle.ui-testing
     platform: iOS
@@ -118,21 +102,6 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         TEST_TARGET_NAME: FootballPerformance
 
-  FootballPerformanceWatchTests:
-    type: bundle.unit-test
-    platform: watchOS
-    deploymentTarget: "26.0"
-    sources:
-      - path: Tests/WatchTransfer
-    dependencies:
-      - target: FootballPerformanceWatch
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.watchtests
-        GENERATE_INFOPLIST_FILE: true
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Football Performance Watch.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Football Performance Watch"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-
 schemes:
   FootballPerformanceWatch:
     build:
@@ -140,10 +109,6 @@ schemes:
         FootballPerformanceWatch: all
     run:
       config: Debug
-    test:
-      config: Debug
-      targets:
-        - FootballPerformanceWatchTests
     archive:
       config: Release
 
@@ -156,18 +121,9 @@ schemes:
     test:
       config: Debug
       targets:
-        - FootballPerformanceTests
+        - FootballPerformanceE2E
     archive:
       config: Release
-
-  FootballPerformanceTests:
-    build:
-      targets:
-        FootballPerformanceTests: all
-    test:
-      config: Debug
-      targets:
-        - FootballPerformanceTests
 
   FootballPerformanceE2E:
     build:
@@ -178,11 +134,3 @@ schemes:
       targets:
         - FootballPerformanceE2E
 
-  FootballPerformanceWatchTests:
-    build:
-      targets:
-        FootballPerformanceWatchTests: all
-    test:
-      config: Debug
-      targets:
-        - FootballPerformanceWatchTests

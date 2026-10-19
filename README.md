@@ -43,8 +43,8 @@ The generated project has two explicit application targets:
 - `FootballPerformanceWatch` — independent watchOS app and primary product
 - `FootballPerformance` — iOS companion that embeds the Watch app
 
-It also has focused iOS and watchOS test targets for the durable package/import
-contract and Watch receipt state machine.
+It also has `FootballPerformanceE2E`, an XCUITest target of end-to-end journeys
+run against deterministic QA fixtures. The project has no unit tests.
 
 ## Device proof still required
 
