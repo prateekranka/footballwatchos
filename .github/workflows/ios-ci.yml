@@ -124,6 +124,39 @@ jobs:
           git commit -qm "Screenshots for ${GITHUB_REF_NAME}@${SRC_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-shots
 
+      - name: Simulator build
+        if: success() || failure()
+        run: |
+          xcodebuild build \
+            -project FootballPerformance.xcodeproj \
+            -scheme FootballPerformance \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build/SimDD \
+            ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO -quiet
+          APP="build/SimDD/Build/Products/Debug-iphonesimulator/Football Performance.app"
+          lipo -info "$APP/Football Performance"
+          mkdir -p simbuild
+          ditto -c -k --keepParent "$APP" simbuild/FootballPerformance-simulator.zip
+          ls -la simbuild
+          SRC_SHA=$(git rev-parse --short HEAD)
+          cd simbuild
+          git init -q
+          git checkout -q -b ci-sim-build
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Simulator build for ${GITHUB_REF_NAME}@${SRC_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-sim-build
+
+      - name: Upload simulator build
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FootballPerformance-simulator
+          path: simbuild/FootballPerformance-simulator.zip
+          if-no-files-found: ignore
+
       - name: Upload test results
         if: success() || failure()
         uses: actions/upload-artifact@v4
