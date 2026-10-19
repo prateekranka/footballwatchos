@@ -68,6 +68,14 @@ SDK builds do not establish those claims.
 The staged roadmap and ticket source of truth live in
 `.scratch/footy-watch-v1/`.
 
+## Coaching
+
+`PerformanceCoachV1` turns the session history into weekly load, streaks,
+an acute:chronic load ratio, and ranked tips with a drill for each. Per
+session it adds heart-rate zones (age-based max HR from Settings when set),
+first- vs second-half work rate, and hard-effort recovery. Personal tips quote
+recorded numbers; general football-fitness guidance is labelled as such.
+
 ## Phase 2
 
 The iPhone can upload, download, inspect, and list `.footysession` packages in the reachable R2 store.

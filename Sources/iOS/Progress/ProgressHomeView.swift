@@ -16,6 +16,13 @@ struct ProgressHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 header
+
+                if !model.sessions.isEmpty {
+                    loadSection
+                    improveSection
+                }
+
+                SectionHeader(title: "Trends", caption: "One measure at a time, against your own history.")
                 selectors
 
                 if trendSessions.isEmpty {
@@ -45,7 +52,7 @@ struct ProgressHomeView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("PERSONAL BASELINE")
+            Text("GET BETTER")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(PerformanceTheme.accent)
                 .tracking(0.8)
@@ -55,9 +62,68 @@ struct ProgressHomeView: View {
                 .font(PerformanceTheme.screenTitle)
                 .foregroundStyle(PerformanceTheme.primaryText)
 
-            Text("One measure at a time, against your own history.")
+            Text("Your load, your trends, and what to work on next.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var snapshot: PerformanceCoachV1.TrainingSnapshot {
+        PerformanceCoachV1.snapshot(records: model.sessions)
+    }
+
+    private var loadSection: some View {
+        let snapshot = self.snapshot
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Training load", caption: "Minutes played per week")
+            VStack(alignment: .leading, spacing: 14) {
+                WeeklyLoadChart(weeks: snapshot.weeks)
+                    .frame(height: 140)
+                AdaptiveMetricGroup {
+                    StatBlock(
+                        value: "\(snapshot.sessionsLast28Days)",
+                        caption: "Sessions, 4 weeks",
+                        icon: "calendar"
+                    )
+                    StatBlock(
+                        value: "\(snapshot.streakWeeks)",
+                        caption: "Week streak",
+                        icon: "flame.fill",
+                        tint: PerformanceTheme.warning
+                    )
+                    StatBlock(
+                        value: "\(Int((snapshot.thisWeek?.minutes ?? 0).rounded()))",
+                        caption: "Minutes this week",
+                        icon: "timer"
+                    )
+                }
+            }
+            .performanceCard()
+        }
+    }
+
+    private var improveSection: some View {
+        let tips = PerformanceCoachV1.tips(records: model.sessions, snapshot: snapshot)
+        return VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "How to get better", caption: "Built from your sessions, with a drill for each.")
+            ForEach(tips.prefix(2)) { tip in
+                CoachTipCard(tip: tip)
+            }
+            NavigationLink {
+                CoachingPlanView()
+            } label: {
+                HStack {
+                    Label("See your full plan", systemImage: "list.bullet.clipboard")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(PerformanceTheme.accent)
+                .performanceCard(padding: 14)
+            }
+            .buttonStyle(PressableStyle())
         }
     }
 

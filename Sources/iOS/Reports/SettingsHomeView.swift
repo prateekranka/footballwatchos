@@ -6,6 +6,7 @@ import SwiftUI
 struct SettingsHomeView: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
+    @AppStorage("playerAge") private var playerAge = 0
     @State private var showsOnboarding = false
 
     var body: some View {
@@ -35,6 +36,28 @@ struct SettingsHomeView: View {
                 }
             }
             #endif
+            Section {
+                Stepper(value: Binding(
+                    get: { playerAge > 0 ? playerAge : 30 },
+                    set: { playerAge = $0 }
+                ), in: 10...80) {
+                    LabeledContent("Age") {
+                        Text(playerAge > 0 ? "\(playerAge)" : "Not set")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                LabeledContent("Max heart rate") {
+                    Text(maxHeartRateText)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            } header: {
+                Text("Player")
+            } footer: {
+                Text("Your age sets your heart-rate zones. It stays on this iPhone.")
+            }
+
             Section("Appearance") {
                 Picker("Appearance", selection: $appearancePreference) {
                     ForEach(AppearancePreference.allCases) { preference in
@@ -91,6 +114,12 @@ struct SettingsHomeView: View {
         .fullScreenCover(isPresented: $showsOnboarding) {
             OnboardingView { showsOnboarding = false }
         }
+    }
+
+    private var maxHeartRateText: String {
+        guard playerAge > 0 else { return "Estimated" }
+        let max = PerformanceCoachV1.heartRateMax(age: playerAge, observedPeak: nil)
+        return "\(Int(max.rounded())) bpm"
     }
 
     private var storageSummary: String {

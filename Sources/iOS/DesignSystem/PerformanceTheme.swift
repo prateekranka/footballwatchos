@@ -36,6 +36,36 @@ enum PerformanceTheme {
     static let primaryText = adaptive(light: UIColor(red: 0.07, green: 0.11, blue: 0.17, alpha: 1),
                                       dark: UIColor(red: 0.95, green: 0.96, blue: 0.97, alpha: 1))
 
+    /// Deep pitch green and a brighter emerald for hero surfaces.
+    static let pitchDeep = adaptive(light: UIColor(red: 10.0 / 255, green: 74.0 / 255, blue: 40.0 / 255, alpha: 1),
+                                    dark: UIColor(red: 8.0 / 255, green: 52.0 / 255, blue: 30.0 / 255, alpha: 1))
+    static let pitchBright = adaptive(light: UIColor(red: 24.0 / 255, green: 140.0 / 255, blue: 72.0 / 255, alpha: 1),
+                                      dark: UIColor(red: 20.0 / 255, green: 110.0 / 255, blue: 60.0 / 255, alpha: 1))
+
+    /// Hero gradient: the feel of a floodlit pitch.
+    static var heroGradient: LinearGradient {
+        LinearGradient(colors: [pitchBright, pitchDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    /// Highlight used on hero surfaces for the key number.
+    static let highlight = Color(red: 0.80, green: 1.00, blue: 0.40)
+
+    /// Coaching tones.
+    static let positive = accent
+    static let improve = adaptive(light: UIColor(red: 37.0 / 255, green: 84.0 / 255, blue: 200.0 / 255, alpha: 1),
+                                  dark: UIColor(red: 0.45, green: 0.62, blue: 1.00, alpha: 1))
+
+    /// Heart-rate zones 1 (easy) to 5 (max), cool to hot.
+    static func zoneColor(_ zone: Int) -> Color {
+        switch zone {
+        case 1: return Color(red: 0.55, green: 0.66, blue: 0.75)
+        case 2: return movement
+        case 3: return accent
+        case 4: return Color(red: 0.96, green: 0.55, blue: 0.10)
+        default: return heartRate
+        }
+    }
+
     private static func adaptive(light: UIColor, dark: UIColor) -> Color {
         Color(uiColor: UIColor { traits in
             traits.userInterfaceStyle == .dark ? dark : light
@@ -54,6 +84,10 @@ enum PerformanceTheme {
 
     /// Large, tight-leading screen title as in the approved concept.
     static let screenTitle: Font = .system(size: 30, weight: .bold, design: .default)
+    /// Big hero numbers. Rounded digits read as sporty and friendly.
+    static let heroNumber: Font = .system(size: 40, weight: .bold, design: .rounded)
+    /// Numbers inside metric tiles.
+    static let metricNumber: Font = .system(.title2, design: .rounded).weight(.bold)
 
     // MARK: - Motion
 
