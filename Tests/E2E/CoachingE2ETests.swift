@@ -144,13 +144,24 @@ final class CoachingE2ETests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
     }
 
-    /// Scrolls down until the element is on screen.
+    /// Scrolls toward the element until it can be tapped. Once the element
+    /// exists, it scrolls in its direction with slow swipes, so a swipe that
+    /// carries it past the top (under the navigation bar) or leaves it under
+    /// the tab bar is corrected instead of compounding.
     @discardableResult
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication, maxSwipes: Int = 10) -> Bool {
-        var swipes = 0
-        while !(element.exists && element.isHittable), swipes < maxSwipes {
-            app.swipeUp()
-            swipes += 1
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, maxSwipes: Int = 14) -> Bool {
+        for _ in 0..<maxSwipes {
+            if element.exists && element.isHittable { return true }
+            if element.exists {
+                let window = app.windows.firstMatch.frame
+                if element.frame.midY < window.midY {
+                    app.swipeDown(velocity: .slow)
+                } else {
+                    app.swipeUp(velocity: .slow)
+                }
+            } else {
+                app.swipeUp()
+            }
         }
         return element.exists && element.isHittable
     }
