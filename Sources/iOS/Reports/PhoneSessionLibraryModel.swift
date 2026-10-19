@@ -96,15 +96,120 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var exportURL: URL?
     @Published private(set) var message: String?
     @Published private(set) var isLoading = false
+    /// True while a Watch package is arriving or being imported.
+    @Published private(set) var isReceivingFromWatch = false
+    /// How many imported sessions have been pushed to the health pipeline.
+    @Published private(set) var pipelinePushedCount = 0
+    /// Last successful pipeline push time, if any.
+    @Published private(set) var pipelineLastPushedUTC: Date?
+    /// Last pipeline push failure, if any.
+    @Published private(set) var pipelineLastError: String?
+    /// Number of vault sessions waiting to upload to the R2 session store.
+    @Published private(set) var outboxPendingCount = 0
+    /// Number of vault sessions uploaded to the R2 session store.
+    @Published private(set) var outboxPushedCount = 0
+    /// Last R2 session-store upload failure, if any.
+    @Published private(set) var outboxLastError: String?
+    /// In-flight chunked-upload progress (e.g. "part 12 of 69"), if any.
+    @Published private(set) var outboxProgressDetail: String?
 
     private let repository: FileSessionRepository?
     private let diagnosticRepository: PhoneDiagnosticRepository?
+    private let pipelinePushService: PipelinePushService?
+    private let sessionPushOutbox: SessionPushOutbox?
+    private let previewStore: SessionPreviewStore
+    private var notificationObservers: [NSObjectProtocol] = []
+
+    /// Derived per-session visuals keyed by session ID. Computed off the
+    /// main actor from bounded package scans and cached by digest.
+    @Published private(set) var visualSummaries: [UUID: SessionVisualSummary] = [:]
+
+    /// True when local storage could not be opened at all.
+    var repositoryUnavailable: Bool { repository == nil }
+
+    var outboxAvailable: Bool { sessionPushOutbox != nil }
+
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var qaScenario: QASessionScenario = .empty
+    @Published private(set) var isSettingQAData = false
+    @Published var qaLayout: SimulatorQALayout = .standard
+    var isUIQA: Bool { UserDefaults.standard.bool(forKey: "FP_UI_QA") }
+
+    func setQAData(_ scenario: QASessionScenario) async {
+        guard isUIQA, let repository else { return }
+        isSettingQAData = true
+        defer { isSettingQAData = false }
+        do {
+            try await repository.replaceQAData(with: scenario)
+            qaScenario = scenario
+            selectedDetail = nil
+            exportURL = nil
+            visualSummaries = [:]
+            message = nil
+            await refresh()
+        } catch {
+            message = "The QA fixture could not be loaded."
+        }
+    }
+    #endif
 
     init(runtime: PhoneTransferRuntime = .shared) {
         self.repository = runtime.repository
         self.diagnosticRepository = runtime.diagnosticRepository
+        self.pipelinePushService = runtime.pipelinePushService
+        self.sessionPushOutbox = runtime.sessionPushOutbox
+        self.previewStore = SessionPreviewStore()
         self.message = runtime.startupErrorDescription.map { _ in
             "Local iPhone storage is unavailable. No session status can be shown."
+        }
+
+        let receivedName = PhoneWatchConnectivityCoordinator.sessionReceivedNotification
+        let importedName = PhoneWatchConnectivityCoordinator.sessionImportedNotification
+        let progressName = PipelinePushService.progressDidChange
+        let outboxProgressName = SessionPushOutbox.didChange
+        for name in [receivedName, importedName, progressName, outboxProgressName] {
+            let token = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.handleSyncNotification(name: name)
+                }
+            }
+            notificationObservers.append(token)
+        }
+    }
+
+    private func handleSyncNotification(name: Notification.Name) async {
+        switch name {
+        case PhoneWatchConnectivityCoordinator.sessionReceivedNotification:
+            isReceivingFromWatch = true
+        case PhoneWatchConnectivityCoordinator.sessionImportedNotification:
+            isReceivingFromWatch = false
+            await refresh()
+        case PipelinePushService.progressDidChange:
+            await refreshPipelineProgress()
+        case SessionPushOutbox.didChange:
+            await refreshOutboxProgress()
+        default:
+            break
+        }
+    }
+
+    func addManualSession(_ draft: ManualSessionDraft) async -> UUID? {
+        guard let repository else {
+            message = "Local iPhone storage is unavailable. The session was not saved."
+            return nil
+        }
+        do {
+            let record = try await repository.addManualSession(draft)
+            message = nil
+            await refresh()
+            return record.sessionID
+        } catch {
+            message = "The session could not be saved. Check the date and duration, then try again."
+            return nil
         }
     }
 
@@ -123,8 +228,66 @@ final class PhoneSessionLibraryModel: ObservableObject {
         if let diagnosticRepository {
             watchDiagnostics = await diagnosticRepository.reports()
         }
+        await refreshPipelineProgress()
+        await refreshOutboxProgress()
         if let selectedID = selectedDetail?.record.sessionID {
             await loadDetail(for: selectedID, clearMessage: false)
+        }
+    }
+
+    /// Reads the durable pipeline push progress into the published state that
+    /// drives the Session Library sync bar.
+    func refreshPipelineProgress() async {
+        guard let pipelinePushService else { return }
+        let progress = await pipelinePushService.progress()
+        pipelinePushedCount = progress.pushedCount
+        pipelineLastPushedUTC = progress.lastPushedUTC
+        pipelineLastError = progress.lastError
+    }
+
+    /// Reads durable R2 session-store progress into the published banner state.
+    func refreshOutboxProgress() async {
+        guard let sessionPushOutbox else { return }
+        let progress = await sessionPushOutbox.progress()
+        outboxPendingCount = progress.pendingCount
+        outboxPushedCount = progress.pushedCount
+        outboxLastError = progress.lastError
+        outboxProgressDetail = progress.uploadDetail
+    }
+
+    /// Re-enqueues every waiting backup upload.
+    func retryPendingUploads() async {
+        guard let sessionPushOutbox else { return }
+        await sessionPushOutbox.retryAll()
+        await refreshOutboxProgress()
+    }
+
+    /// Prepares derived visuals for the newest sessions. The featured card
+    /// gets the first budget; older rows compute on demand when shown.
+    func prepareVisualSummaries(budget: Int = 1) async {
+        guard let repository, !sessions.isEmpty else { return }
+        await previewStore.prepare(
+            records: sessions,
+            repository: repository,
+            budget: budget
+        )
+        visualSummaries = await previewStore.snapshot()
+    }
+
+    /// Requests the visual summary for one visible row, computed at utility
+    /// priority so scrolling never waits on package scans.
+    func requestVisualSummary(for sessionID: UUID) {
+        guard let repository,
+              let record = sessions.first(where: { $0.sessionID == sessionID }),
+              visualSummaries[sessionID] == nil else {
+            return
+        }
+        Task(priority: .utility) {
+            await previewStore.prepare(records: [record], repository: repository, budget: 1)
+            let snapshot = await previewStore.snapshot()
+            if !snapshot.isEmpty {
+                visualSummaries = snapshot
+            }
         }
     }
 
@@ -135,7 +298,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
             selectedDetail = try await repository.detail(for: sessionID)
             exportURL = nil
         } catch {
-            message = "This iPhone copy could not be read. It has not been exported."
+            let shortID = sessionID.uuidString.lowercased().prefix(8)
+            message = "Session \(shortID) could not be read: \(String(describing: error))."
         }
     }
 
@@ -146,7 +310,8 @@ final class PhoneSessionLibraryModel: ObservableObject {
             exportURL = try await repository.verifiedExportURL(for: sessionID)
         } catch {
             exportURL = nil
-            message = "The stored package no longer matches its recorded digest, so export is unavailable."
+            let shortID = sessionID.uuidString.lowercased().prefix(8)
+            message = "Session \(shortID) could not be read: \(String(describing: error))."
         }
     }
 

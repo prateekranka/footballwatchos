@@ -5,8 +5,19 @@ import Foundation
 /// the delegate callback and sends only stable Foundation values to the
 /// repository actor.
 final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unchecked Sendable {
+    /// Posted when a Watch package file arrives at the iPhone (before import).
+    static let sessionReceivedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.sessionReceived"
+    )
+    /// Posted after a Watch package has been durably imported on the iPhone.
+    static let sessionImportedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.sessionImported"
+    )
+
     private let repository: FileSessionRepository
     private let diagnosticRepository: PhoneDiagnosticRepository
+    private let pipelinePushService: PipelinePushService
+    private let sessionPushOutbox: SessionPushOutbox
     private let configuration: FileSessionRepository.Configuration
     private let session: WCSession
 
@@ -14,10 +25,14 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         repository: FileSessionRepository,
         diagnosticRepository: PhoneDiagnosticRepository,
         configuration: FileSessionRepository.Configuration,
+        pipelinePushService: PipelinePushService = PipelinePushService(),
+        sessionPushOutbox: SessionPushOutbox = SessionPushOutbox(),
         session: WCSession = .default
     ) {
         self.repository = repository
         self.diagnosticRepository = diagnosticRepository
+        self.pipelinePushService = pipelinePushService
+        self.sessionPushOutbox = sessionPushOutbox
         self.configuration = configuration
         self.session = session
         super.init()
@@ -50,6 +65,8 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         } else {
             envelopeData = nil
         }
+
+        NotificationCenter.default.post(name: Self.sessionReceivedNotification, object: nil)
 
         do {
             // This move is synchronous by design: WatchConnectivity can remove
@@ -108,9 +125,18 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     func reconcileAndRequeueAtStartup() {
         let repository = repository
-        Task { [weak self, repository] in
+        let outbox = sessionPushOutbox
+        Task { [weak self, repository, outbox] in
             do {
                 try await repository.reconcileOnStartup()
+                let sessions = await repository.sessions()
+                for session in sessions where !session.isManualEntry {
+                    await outbox.enqueue(
+                        sessionID: session.sessionID,
+                        repository: repository
+                    )
+                }
+                Task { await outbox.retryAll() }
                 self?.requeueDurableReceipts()
             } catch {
                 let failureDescription = String(describing: error)
@@ -121,10 +147,16 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     private func importStagedDelivery(_ deliveryID: String) {
         let repository = repository
-        Task { [weak self, repository] in
+        let outbox = sessionPushOutbox
+        Task { [weak self, repository, outbox] in
             let outcome = await repository.importStaged(deliveryID: deliveryID)
             guard let payload = outcome.receiptPayload else { return }
             self?.queueReceipt(payload)
+            if case let .imported(record, _) = outcome {
+                NotificationCenter.default.post(name: Self.sessionImportedNotification, object: nil)
+                await outbox.enqueue(sessionID: record.sessionID, repository: repository)
+                Task { await outbox.pushOne() }
+            }
         }
     }
 
@@ -161,27 +193,58 @@ final class PhoneTransferRuntime: @unchecked Sendable {
 
     let repository: FileSessionRepository?
     let diagnosticRepository: PhoneDiagnosticRepository?
+    let pipelinePushService: PipelinePushService?
+    let sessionPushOutbox: SessionPushOutbox?
     private let coordinator: PhoneWatchConnectivityCoordinator?
     let startupErrorDescription: String?
 
     private init() {
         do {
-            let configuration = try FileSessionRepository.Configuration.applicationSupport()
+            var configuration = try FileSessionRepository.Configuration.applicationSupport()
+            #if DEBUG && targetEnvironment(simulator)
+            let isUnitTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA") || isUnitTesting
+            if isolatedTesting {
+                configuration = FileSessionRepository.Configuration(
+                    rootDirectory: configuration.rootDirectory.deletingLastPathComponent()
+                        .appendingPathComponent(isUnitTesting ? "FootballPerformanceUnitTests" : "FootballPerformanceQA", isDirectory: true)
+                )
+            }
+            #endif
             let repository = try FileSessionRepository(configuration: configuration)
             let diagnosticRepository = try PhoneDiagnosticRepository(
                 rootDirectory: configuration.rootDirectory
             )
+            #if DEBUG && targetEnvironment(simulator)
+            if isolatedTesting {
+                self.repository = repository
+                self.diagnosticRepository = diagnosticRepository
+                self.pipelinePushService = nil
+                self.sessionPushOutbox = nil
+                self.coordinator = nil
+                self.startupErrorDescription = nil
+                return
+            }
+            #endif
+            let pipelinePushService = PipelinePushService()
+            let sessionPushOutbox = SessionPushOutbox(repository: repository)
             self.repository = repository
             self.diagnosticRepository = diagnosticRepository
+            self.pipelinePushService = pipelinePushService
+            self.sessionPushOutbox = sessionPushOutbox
             self.coordinator = PhoneWatchConnectivityCoordinator(
                 repository: repository,
                 diagnosticRepository: diagnosticRepository,
-                configuration: configuration
+                configuration: configuration,
+                pipelinePushService: pipelinePushService,
+                sessionPushOutbox: sessionPushOutbox
             )
             self.startupErrorDescription = nil
         } catch {
             self.repository = nil
             self.diagnosticRepository = nil
+            self.pipelinePushService = nil
+            self.sessionPushOutbox = nil
             self.coordinator = nil
             self.startupErrorDescription = String(describing: error)
         }

@@ -81,13 +81,39 @@ public enum MetricProvenanceV1: String, Codable, Sendable, Equatable {
     case coreMotionBatched
     case coreMotionFallback
     case capturedDeviceEstimate
+    case userEntered
+}
+
+/// A football format selected by the player, independent of capture quality.
+public enum FootballSessionTypeV1: String, Codable, CaseIterable, Sendable, Identifiable {
+    case football
+    case fiveASide
+    case sevenASide
+    case elevenASide
+    case training
+    case calibration
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .football: "Football"
+        case .fiveASide: "5-a-side"
+        case .sevenASide: "7-a-side"
+        case .elevenASide: "11-a-side"
+        case .training: "Training"
+        case .calibration: "Calibration"
+        }
+    }
 }
 
 public enum MetricUnitV1: String, Codable, Sendable, Equatable {
     case seconds
     case meters
+    case metersPerSecond
     case beatsPerMinute
     case kilocalories
+    case percent
     case count
 }
 
@@ -328,6 +354,10 @@ public struct SessionEnvelopeV1: Codable, Sendable, Equatable {
     public let captureSource: MotionCaptureSourceV1
     public let initialAccelerometerAvailability: StreamAvailabilityV1
     public let initialDeviceMotionAvailability: StreamAvailabilityV1
+    /// Optional for packages written before session types were introduced.
+    public let sessionType: FootballSessionTypeV1?
+
+    public var footballType: FootballSessionTypeV1 { sessionType ?? .football }
 
     public init(
         sessionID: UUID,
@@ -335,7 +365,8 @@ public struct SessionEnvelopeV1: Codable, Sendable, Equatable {
         startedAt: Date,
         captureSource: MotionCaptureSourceV1,
         initialAccelerometerAvailability: StreamAvailabilityV1,
-        initialDeviceMotionAvailability: StreamAvailabilityV1
+        initialDeviceMotionAvailability: StreamAvailabilityV1,
+        sessionType: FootballSessionTypeV1? = nil
     ) {
         self.sessionID = sessionID
         self.createdAt = createdAt
@@ -343,6 +374,7 @@ public struct SessionEnvelopeV1: Codable, Sendable, Equatable {
         self.captureSource = captureSource
         self.initialAccelerometerAvailability = initialAccelerometerAvailability
         self.initialDeviceMotionAvailability = initialDeviceMotionAvailability
+        self.sessionType = sessionType
     }
 }
 

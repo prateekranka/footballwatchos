@@ -136,6 +136,10 @@ public actor SessionPackageWriter {
         try append(.distanceSnapshot(snapshot))
     }
 
+    public func appendSprintBatch(_ batch: SprintBatchV1) throws {
+        try append(.sprintBatch(batch))
+    }
+
     public func appendCaptureDiagnostics(_ diagnostics: CaptureDiagnosticsV1) throws {
         try append(.captureDiagnostics(diagnostics))
     }

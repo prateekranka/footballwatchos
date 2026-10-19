@@ -4,7 +4,7 @@ import Testing
 
 @Suite("FileSessionRepository")
 struct FileSessionRepositoryTests {
-    @Test("a complete matching package imports and persists a receipt")
+    @Test("a gzip package imports exact original bytes and persists a receipt")
     func validImport() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -12,7 +12,10 @@ struct FileSessionRepositoryTests {
         try await repository.reconcileOnStartup()
 
         let package = try fixture.writePackage(sessionID: fixture.firstSessionID, startedAt: fixture.start)
-        let deliveryID = try fixture.stage(package)
+        let originalBytes = try Data(contentsOf: package.url)
+        let compressedURL = package.url.appendingPathExtension("gz")
+        try SessionTransferGzipV1.compressPackage(at: package.url, to: compressedURL)
+        let deliveryID = try fixture.stage(.init(url: compressedURL, metadata: package.metadata))
         let outcome = await repository.importStaged(deliveryID: deliveryID)
 
         guard case let .imported(record, payload) = outcome else {
@@ -25,6 +28,9 @@ struct FileSessionRepositoryTests {
         let receipts = await repository.durableReceiptPayloads()
         #expect(sessions.count == 1)
         #expect(receipts.count == 1)
+        let exportURL = try await repository.verifiedExportURL(for: record.sessionID)
+        #expect(try Data(contentsOf: exportURL) == originalBytes)
+        #expect(try Data(contentsOf: package.url) == originalBytes)
     }
 
     @Test("the same session and digest is idempotent and requeues its durable receipt")
@@ -36,7 +42,11 @@ struct FileSessionRepositoryTests {
         let copy = fixture.directory.appendingPathComponent("copy.footysession")
         try Data(contentsOf: package.url).write(to: copy, options: .atomic)
 
-        _ = await repository.importStaged(deliveryID: try fixture.stage(package))
+        let compressedURL = package.url.appendingPathExtension("gz")
+        try SessionTransferGzipV1.compressPackage(at: package.url, to: compressedURL)
+        _ = await repository.importStaged(
+            deliveryID: try fixture.stage(.init(url: compressedURL, metadata: package.metadata))
+        )
         let duplicate = await repository.importStaged(deliveryID: try fixture.stage(.init(url: copy, metadata: package.metadata)))
 
         guard case let .duplicate(record, receiptPayload) = duplicate else {
@@ -83,9 +93,11 @@ struct FileSessionRepositoryTests {
         let repository = try fixture.repository()
 
         let corrupt = try fixture.writePackage(sessionID: fixture.firstSessionID, startedAt: fixture.start)
-        var corruptBytes = try Data(contentsOf: corrupt.url)
-        corruptBytes[corruptBytes.index(before: corruptBytes.endIndex)] ^= 0xFF
-        try corruptBytes.write(to: corrupt.url, options: .atomic)
+        let corruptGzipURL = corrupt.url.appendingPathExtension("gz")
+        try SessionTransferGzipV1.compressPackage(at: corrupt.url, to: corruptGzipURL)
+        var corruptBytes = try Data(contentsOf: corruptGzipURL)
+        corruptBytes[corruptBytes.count - 8] ^= 0xFF
+        try corruptBytes.write(to: corruptGzipURL, options: .atomic)
 
         let unknown = try fixture.writePackage(
             sessionID: fixture.secondSessionID,
@@ -106,7 +118,9 @@ struct FileSessionRepositoryTests {
             filename: "incomplete.footysession"
         )
 
-        let corruptOutcome = await repository.importStaged(deliveryID: try fixture.stage(corrupt))
+        let corruptOutcome = await repository.importStaged(
+            deliveryID: try fixture.stage(.init(url: corruptGzipURL, metadata: corrupt.metadata))
+        )
         let unknownOutcome = await repository.importStaged(deliveryID: try fixture.stage(unknown))
         let incompleteOutcome = await repository.importStaged(deliveryID: try fixture.stage(incomplete))
         guard case .quarantined = corruptOutcome,
@@ -117,6 +131,8 @@ struct FileSessionRepositoryTests {
         }
         let sessions = await repository.sessions()
         #expect(sessions.isEmpty)
+        let receipts = await repository.durableReceiptPayloads()
+        #expect(receipts.isEmpty)
         #expect(try fixture.quarantineDeliveryCount() == 3)
     }
 

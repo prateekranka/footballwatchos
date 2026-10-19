@@ -1,4 +1,5 @@
 import Foundation
+import zlib
 
 public struct SessionTransferEnvelopeV1: Codable, Sendable, Equatable {
     public static let schema = "com.prateekranka.footballperformance.session-transfer"
@@ -62,6 +63,7 @@ public enum SessionTransferErrorV1: Error, Sendable, Equatable {
     case missingEnvelope
     case missingCompletion
     case metadataMismatch
+    case gzipFailure(Int32)
 }
 
 public enum SessionTransferCodecV1 {
@@ -72,16 +74,17 @@ public enum SessionTransferCodecV1 {
         at url: URL,
         createdAt: Date = Date()
     ) throws -> InspectedSessionPackageV1 {
-        let read = try FootySessionPackageV1.read(from: url)
-        guard read.status == .complete else {
+        // Bounded-memory scan: packages of unbounded session length are
+        // inspected on the Watch before transfer; a full-frame decode there
+        // trips watchOS jetsam. Only envelope + completion are retained.
+        let scan = try FootySessionPackageV1.scanStructure(of: url)
+        guard scan.status == .complete else {
             throw SessionTransferErrorV1.incompletePackage
         }
-        guard let first = read.frames.first,
-              case let .envelope(sessionEnvelope) = first.payload else {
+        guard let sessionEnvelope = scan.envelope else {
             throw SessionTransferErrorV1.missingEnvelope
         }
-        guard let last = read.frames.last,
-              case let .completion(completion) = last.payload else {
+        guard let completion = scan.completion else {
             throw SessionTransferErrorV1.missingCompletion
         }
 
@@ -89,7 +92,7 @@ public enum SessionTransferCodecV1 {
         let byteCount = UInt64(values.fileSize ?? 0)
         let transferEnvelope = SessionTransferEnvelopeV1(
             sessionID: sessionEnvelope.sessionID,
-            packageDigest: read.wholeFileDigest,
+            packageDigest: scan.wholeFileDigest,
             byteCount: byteCount,
             createdAt: createdAt
         )
@@ -151,5 +154,116 @@ public enum SessionTransferCodecV1 {
         let encoder = PropertyListEncoder()
         encoder.outputFormat = .binary
         return encoder
+    }
+}
+
+public enum SessionTransferGzipV1 {
+    private static let bufferSize = 64 * 1024
+
+    public static func compressPackage(at sourceURL: URL, to destinationURL: URL) throws {
+        let temporaryURL = destinationURL.deletingLastPathComponent()
+            .appendingPathComponent("\(UUID().uuidString).gzip-partial")
+        let source = try FileHandle(forReadingFrom: sourceURL)
+        defer { try? source.close() }
+        guard let output = gzopen(temporaryURL.path, "wb1") else {
+            throw SessionTransferErrorV1.gzipFailure(Z_ERRNO)
+        }
+        var outputIsOpen = true
+        defer {
+            if outputIsOpen { gzclose(output) }
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+
+        var hasMore = true
+        while hasMore {
+            hasMore = try autoreleasepool {
+                guard let data = try source.read(upToCount: bufferSize), !data.isEmpty else {
+                    return false
+                }
+                let written = data.withUnsafeBytes { bytes in
+                    gzwrite(output, bytes.baseAddress, UInt32(bytes.count))
+                }
+                guard written == data.count else {
+                    var code: Int32 = Z_OK
+                    _ = gzerror(output, &code)
+                    throw SessionTransferErrorV1.gzipFailure(code)
+                }
+                return true
+            }
+        }
+        let code = gzclose(output)
+        outputIsOpen = false
+        guard code == Z_OK else {
+            throw SessionTransferErrorV1.gzipFailure(code)
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+    }
+
+    public static func decompressPackageIfNeeded(
+        at url: URL,
+        expectedByteCount: UInt64
+    ) throws {
+        let source = try FileHandle(forReadingFrom: url)
+        let header: Data
+        do {
+            header = try source.read(upToCount: 3) ?? Data()
+            try source.close()
+        } catch {
+            try? source.close()
+            throw error
+        }
+        guard header.starts(with: [0x1f, 0x8b]) else { return }
+        guard header.count == 3, header[2] == 8 else {
+            throw SessionTransferErrorV1.gzipFailure(Z_DATA_ERROR)
+        }
+
+        let temporaryURL = url.deletingLastPathComponent()
+            .appendingPathComponent("\(UUID().uuidString).gunzip-partial")
+        guard let input = gzopen(url.path, "rb") else {
+            throw SessionTransferErrorV1.gzipFailure(Z_ERRNO)
+        }
+        var inputIsOpen = true
+        defer {
+            if inputIsOpen { gzclose(input) }
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+        guard FileManager.default.createFile(atPath: temporaryURL.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let output = try FileHandle(forWritingTo: temporaryURL)
+        defer { try? output.close() }
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        var byteCount: UInt64 = 0
+
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                gzread(input, bytes.baseAddress, UInt32(bytes.count))
+            }
+            guard count >= 0 else {
+                var code: Int32 = Z_OK
+                _ = gzerror(input, &code)
+                throw SessionTransferErrorV1.gzipFailure(code)
+            }
+            if count == 0 { break }
+            guard UInt64(count) <= expectedByteCount - byteCount else {
+                throw SessionTransferErrorV1.invalidByteCount
+            }
+            byteCount += UInt64(count)
+            try autoreleasepool {
+                try output.write(contentsOf: Data(buffer.prefix(Int(count))))
+            }
+        }
+
+        let code = gzclose(input)
+        inputIsOpen = false
+        guard code == Z_OK else {
+            throw SessionTransferErrorV1.gzipFailure(code)
+        }
+        guard byteCount == expectedByteCount else {
+            throw SessionTransferErrorV1.invalidByteCount
+        }
+        try output.synchronize()
+        try output.close()
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL)
     }
 }
