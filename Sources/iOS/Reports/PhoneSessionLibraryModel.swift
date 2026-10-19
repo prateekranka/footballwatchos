@@ -151,6 +151,18 @@ final class PhoneSessionLibraryModel: ObservableObject {
             message = "The QA fixture could not be loaded."
         }
     }
+
+    private var appliedLaunchScenario = false
+
+    /// Loads the fixture named by the `FP_QA_SCENARIO` launch argument once,
+    /// so CI can screenshot populated screens without driving Settings.
+    func applyLaunchQAScenarioIfRequested() async {
+        guard !appliedLaunchScenario,
+              let name = UserDefaults.standard.string(forKey: "FP_QA_SCENARIO"),
+              let scenario = QASessionScenario(rawValue: name) else { return }
+        appliedLaunchScenario = true
+        await setQAData(scenario)
+    }
     #endif
 
     init(runtime: PhoneTransferRuntime = .shared) {
