@@ -299,7 +299,7 @@ struct SessionInsightsSection: View {
         }
         if let recovery = insights.medianRecoveryBetweenEffortsS {
             result.append(Tile(
-                icon: "arrow.counterclockwise.heart",
+                icon: "arrow.clockwise.heart",
                 tint: PerformanceTheme.movement,
                 value: "\(Int(recovery.rounded())) s",
                 caption: "Typical recovery between efforts"

@@ -239,7 +239,7 @@ enum PerformanceCoachV1 {
                     id: "load-spike",
                     focus: .load,
                     tone: .caution,
-                    title: "Your load jumped this week",
+                    title: "Your load jumped in the last 7 days",
                     evidence: "\(Int(snapshot.acuteMinutes.rounded())) min in the last 7 days against a usual \(Int(chronic.rounded())) min a week. Sudden spikes are when muscle injuries tend to happen.",
                     drill: Drill(
                         name: "Protect the next 48 hours",

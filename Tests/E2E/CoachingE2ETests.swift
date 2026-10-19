@@ -32,7 +32,7 @@ final class CoachingE2ETests: XCTestCase {
 
         // Home: the load spike outranks everything else, quoting the
         // 7-day minutes (3 matches + 1 manual log) against the usual week.
-        let focus = app.element(containing: "Your load jumped this week")
+        let focus = app.element(containing: "Your load jumped in the last 7 days")
         XCTAssertTrue(focus.waitForExistence(timeout: 30), "Focus tip missing; fixture may not have loaded")
         XCTAssertTrue(app.element(containing: "330 min in the last 7 days against a usual 55 min a week").exists)
         XCTAssertTrue(app.element(containing: "THIS WEEK").exists)
@@ -73,7 +73,7 @@ final class CoachingE2ETests: XCTestCase {
 
     func testAgeSettingRecalculatesHeartRateZones() {
         let app = launch(scenario: "coach")
-        XCTAssertTrue(app.element(containing: "Your load jumped this week").waitForExistence(timeout: 30))
+        XCTAssertTrue(app.element(containing: "Your load jumped in the last 7 days").waitForExistence(timeout: 30))
 
         app.tabBars.buttons["Settings"].tap()
         XCTAssertTrue(app.element(containing: "Not set").waitForExistence(timeout: 10))
@@ -94,7 +94,7 @@ final class CoachingE2ETests: XCTestCase {
 
     func testManualLogCountsAsLoadButGetsNoSensorInsights() {
         let app = launch(scenario: "coach")
-        XCTAssertTrue(app.element(containing: "Your load jumped this week").waitForExistence(timeout: 30))
+        XCTAssertTrue(app.element(containing: "Your load jumped in the last 7 days").waitForExistence(timeout: 30))
 
         let seeAll = app.buttons["See all"]
         XCTAssertTrue(reveal(seeAll, in: app))

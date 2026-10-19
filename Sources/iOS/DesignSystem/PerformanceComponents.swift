@@ -116,7 +116,7 @@ struct MetricTile: View {
                 Text(caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(2, reservesSpace: true)
             }
         }
         .performanceCard(padding: 12)
