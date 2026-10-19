@@ -83,10 +83,13 @@ struct SessionPresentationTests {
 
         #expect(SessionRowFormatting.durationLabel(nil) == "—")
         #expect(SessionRowFormatting.durationLabel(0) == "—")
+        #expect(SessionRowFormatting.durationLabel(15) == "15 s")
+        #expect(SessionRowFormatting.durationLabel(.infinity) == "—")
         #expect(SessionRowFormatting.durationLabel(4320) == "72 min")
 
         #expect(SessionRowFormatting.distanceLabel(meters: nil) == "—")
-        #expect(SessionRowFormatting.distanceLabel(meters: 0) == "—")
+        #expect(SessionRowFormatting.distanceLabel(meters: 0) == "0.0 km")
+        #expect(SessionRowFormatting.distanceLabel(meters: .nan) == "—")
         #expect(SessionRowFormatting.distanceLabel(meters: 8400) == "8.4 km")
 
         #expect(SessionRowFormatting.heartRateLabel(nil) == "—")

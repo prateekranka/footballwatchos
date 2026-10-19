@@ -1,0 +1,79 @@
+import { test } from '@e2e-dev/mobile';
+import { expect } from 'e2e';
+import { explore, fixture, latest, layout, openFresh, tab } from './support/football-ui.ts';
+
+test('200 percent text at 320 points keeps session reports reachable', async ui => {
+  const { app, screen } = ui;
+  await openFresh(ui);
+  await fixture(ui, 'Demo data');
+  await layout(ui, '200% text at 320 pt');
+  await app.screenshot('large-narrow-settings');
+  await tab(screen, 'Sessions').tap();
+  await app.screenshot('large-narrow-sessions-top');
+  await latest(ui, 'Football.*Watch recording');
+  await app.screenshot('large-narrow-overview-top');
+  await explore(ui, 'Recording quality');
+  await app.screenshot('large-narrow-quality');
+  await app.back();
+  await explore(ui, 'Details');
+  await app.screenshot('large-narrow-details');
+  const exportButton = screen.getByRole('button', 'Prepare exact export', { exact: true });
+  await screen.scrollUntilVisible(exportButton, { direction: 'down' });
+  await expect(exportButton).toBeVisible();
+  await app.screenshot('large-narrow-actions');
+});
+
+test('one session, established baseline, dark mode, and RTL have real screen evidence', async ui => {
+  const { app, screen, device } = ui;
+  await openFresh(ui);
+  await device.setAppearance('light');
+  await fixture(ui, 'One');
+  await app.screenshot('sessions-one');
+  await tab(screen, 'Progress').tap();
+  await app.screenshot('progress-building-baseline');
+  await fixture(ui, 'Demo data');
+  await app.screenshot('sessions-demo-light');
+  await latest(ui, 'Football.*Watch recording');
+  await app.screenshot('recorded-overview-light');
+  // A swipe beginning over the chart must scroll to the report links.
+  await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
+  await screen.scrollUntilVisible(screen.getByRole('button', /^Recording quality/), { direction: 'down' });
+  await app.screenshot('recorded-overview-lower');
+  await explore(ui, 'Heart rate');
+  await app.screenshot('heart-rate-populated-top');
+  await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
+  await app.screenshot('heart-rate-populated-lower');
+  await app.back();
+  await explore(ui, 'Movement');
+  await app.screenshot('movement-demo');
+  await app.back();
+  await app.back();
+  await tab(screen, 'Progress').tap();
+  await app.screenshot('progress-established-top');
+  await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
+  await app.screenshot('progress-established-lower');
+  await device.setAppearance('dark');
+  await tab(screen, 'Sessions').tap();
+  await app.screenshot('sessions-demo-dark');
+  await layout(ui, 'Right to left');
+  await tab(screen, 'Sessions').tap();
+  await app.screenshot('sessions-rtl-dark');
+  await latest(ui, 'Football.*Watch recording');
+  await app.screenshot('overview-rtl-dark');
+});
+
+test('one thousand normal packages keep history and storage accessible', { timeout: 360_000 }, async ui => {
+  const { app, screen } = ui;
+  await openFresh(ui);
+  await fixture(ui, '1,000 rows');
+  await app.screenshot('sessions-1000');
+  await screen.scrollUntilVisible(screen.getByRole('button', 'See all', { exact: true }), { direction: 'down' });
+  await screen.getByRole('button', 'See all', { exact: true }).tap();
+  await app.screenshot('history-1000-top');
+  await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
+  await app.screenshot('history-1000-scrolled');
+  await tab(screen, 'Settings').tap();
+  await expect(screen.getByText(/Sessions on this iPhone, 1,?000/)).toBeVisible();
+  await app.screenshot('storage-1000');
+  await fixture(ui, 'Empty');
+});

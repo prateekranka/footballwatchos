@@ -34,6 +34,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     @Published private(set) var distanceMeters: Double = 0
     @Published private(set) var averageHeartRate: Double?
     @Published private(set) var startedAt: Date?
+    @Published var selectedSessionType: FootballSessionTypeV1 = .football
     /// Current recovery/transfer aggregate backing the Session Recovery screen.
     /// Nil means the aggregate could not be read yet.
     @Published private(set) var recoveryAggregate: SessionRecoveryAggregateV1?
@@ -321,7 +322,8 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 startedAt: startDate,
                 captureSource: motionPlan.source,
                 initialAccelerometerAvailability: motionPlan.accelerometerAvailability,
-                initialDeviceMotionAvailability: motionPlan.deviceMotionAvailability
+                initialDeviceMotionAvailability: motionPlan.deviceMotionAvailability,
+                sessionType: selectedSessionType
             )
 
             let writer: SessionPackageWriter

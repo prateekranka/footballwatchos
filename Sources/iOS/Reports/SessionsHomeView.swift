@@ -1,12 +1,16 @@
 import SwiftUI
 
+private enum SessionHistoryDestination: Hashable {
+    case allSessions
+}
+
 /// The Sessions destination: latest session featured, recent history beneath
 /// it, sync as one compact line. Hierarchy follows the approved concept:
 /// the newest recording is the hero, everything else is quieter.
 struct SessionsHomeView: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showsAllSessions = false
+    @State private var showsAddSession = false
 
     private var latest: FileSessionRepository.SessionRecord? {
         model.sessions.first
@@ -47,9 +51,10 @@ struct SessionsHomeView: View {
         .navigationDestination(for: UUID.self) { sessionID in
             SessionOverviewScreen(sessionID: sessionID)
         }
-        .navigationDestination(isPresented: $showsAllSessions) {
+        .navigationDestination(for: SessionHistoryDestination.self) { _ in
             AllSessionsView()
         }
+        .sheet(isPresented: $showsAddSession) { AddSessionView() }
         .task {
             await model.refresh()
             await model.prepareVisualSummaries(budget: 1)
@@ -80,6 +85,14 @@ struct SessionsHomeView: View {
                 .foregroundStyle(.secondary)
 
             SyncStatusPill()
+
+            Button { showsAddSession = true } label: {
+                Label("Add session", systemImage: "plus")
+                    .foregroundStyle(PerformanceTheme.onAccent)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(PerformanceTheme.accent)
+            .accessibilityIdentifier("add-session")
         }
     }
 
@@ -90,9 +103,7 @@ struct SessionsHomeView: View {
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(PerformanceTheme.primaryText)
                 Spacer()
-                Button {
-                    showsAllSessions = true
-                } label: {
+                NavigationLink(value: SessionHistoryDestination.allSessions) {
                     Text("See all")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(PerformanceTheme.accent)
@@ -121,7 +132,7 @@ struct SessionsHomeView: View {
                 Text(
                     model.isReceivingFromWatch
                         ? "Your Apple Watch is transferring a recording now."
-                        : "Start a Football Session on your watch. Finished recordings appear here."
+                        : "Start a Football Session on your watch, or add a manual log on this iPhone."
                 )
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -139,12 +150,16 @@ struct SessionsHomeView: View {
 /// stored record; missing evidence shows an explicit dash.
 private struct LatestSessionCard: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
+    @Environment(\.dynamicTypeSize) private var textSize
     let record: FileSessionRepository.SessionRecord
 
     var body: some View {
+        let headerLayout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         NavigationLink(value: record.sessionID) {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline) {
+                headerLayout {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(SessionRowFormatting.dayLabel(record.startedAt))
                             .font(.title3.weight(.semibold))
@@ -153,11 +168,15 @@ private struct LatestSessionCard: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
+                    if !textSize.isAccessibilitySize { Spacer() }
                     StateTag(state: SessionRowFormatting.state(record))
                 }
 
-                HStack(spacing: 0) {
+                Text(SessionRowFormatting.typeAndSource(record))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                AdaptiveMetricGroup {
                     StatBlock(
                         value: SessionRowFormatting.durationLabel(
                             SessionRowFormatting.summaryDuration(record)
@@ -210,25 +229,34 @@ private struct LatestSessionCard: View {
 /// fingerprint underneath. Never shows a UUID.
 struct RecentSessionRow: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
+    @Environment(\.dynamicTypeSize) private var textSize
     let record: FileSessionRepository.SessionRecord
 
     var body: some View {
+        let rowLayout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         NavigationLink(value: record.sessionID) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
+                rowLayout {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(SessionRowFormatting.dayLabel(record.startedAt))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(PerformanceTheme.primaryText)
                         Text(
                             "\(SessionRowFormatting.timeLabel(record.startedAt)) · "
-                                + SessionRowFormatting.state(record).label
+                                + SessionRowFormatting.typeAndSource(record)
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        if !record.isManualEntry {
+                            Text(SessionRowFormatting.state(record).label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 1) {
+                    if !textSize.isAccessibilitySize { Spacer() }
+                    VStack(alignment: textSize.isAccessibilitySize ? .leading : .trailing, spacing: 1) {
                         Text(SessionRowFormatting.durationLabel(
                             SessionRowFormatting.summaryDuration(record)
                         ))
@@ -271,6 +299,7 @@ struct StateTag: View {
     var body: some View {
         Text(state.label)
             .font(.caption.weight(.semibold))
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
             .background(tint.opacity(0.14), in: Capsule())
@@ -291,6 +320,7 @@ struct StateTag: View {
 struct StatBlock: View {
     let value: String
     let caption: String
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -298,7 +328,7 @@ struct StatBlock: View {
                 .font(.body.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(PerformanceTheme.primaryText)
-                .lineLimit(1)
+                .lineLimit(textSize.isAccessibilitySize ? nil : 1)
                 .minimumScaleFactor(0.7)
             Text(caption)
                 .font(.caption)

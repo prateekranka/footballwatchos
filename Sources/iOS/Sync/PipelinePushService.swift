@@ -66,6 +66,7 @@ public actor PipelinePushService {
     ) async {
         do {
             let detail = try await repository.detail(for: sessionID)
+            guard !detail.record.isManualEntry else { return }
             let exportURL = try await repository.verifiedExportURL(for: sessionID)
             let packageData = try Data(contentsOf: exportURL)
 

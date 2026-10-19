@@ -6,6 +6,10 @@ import Foundation
 /// sentence. Nothing here can render a missing metric as zero.
 enum SessionRowFormatting {
 
+    static func typeAndSource(_ record: FileSessionRepository.SessionRecord) -> String {
+        "\(record.sessionEnvelope.footballType.title) · \(record.isManualEntry ? "Manual log" : "Watch recording")"
+    }
+
     /// "Tue, 8 Apr" from the recorded start time.
     static func dayLabel(_ date: Date) -> String {
         date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
@@ -16,16 +20,18 @@ enum SessionRowFormatting {
         date.formatted(.dateTime.hour().minute())
     }
 
-    /// "72 min" or "—" when duration was not recorded.
+    /// Short recordings retain their seconds instead of rounding to zero.
     static func durationLabel(_ duration: Double?) -> String {
-        guard let duration, duration > 0 else { return "—" }
-        let minutes = Int((duration / 60).rounded())
-        return "\(minutes) min"
+        guard let duration, duration.isFinite, duration > 0 else { return "—" }
+        if duration < 60 {
+            return String(format: "%.0f s", max(1, duration.rounded()))
+        }
+        return String(format: "%.0f min", (duration / 60).rounded())
     }
 
     /// "8.4 km" or "—" when distance was not recorded.
     static func distanceLabel(meters: Double?) -> String {
-        guard let meters, meters > 0 else { return "—" }
+        guard let meters, meters.isFinite, meters >= 0 else { return "—" }
         return String(format: "%.1f km", meters / 1_000)
     }
 

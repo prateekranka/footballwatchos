@@ -129,6 +129,30 @@ final class PhoneSessionLibraryModel: ObservableObject {
 
     var outboxAvailable: Bool { sessionPushOutbox != nil }
 
+    #if DEBUG && targetEnvironment(simulator)
+    @Published private(set) var qaScenario: QASessionScenario = .empty
+    @Published private(set) var isSettingQAData = false
+    @Published var qaLayout: SimulatorQALayout = .standard
+    var isUIQA: Bool { UserDefaults.standard.bool(forKey: "FP_UI_QA") }
+
+    func setQAData(_ scenario: QASessionScenario) async {
+        guard isUIQA, let repository else { return }
+        isSettingQAData = true
+        defer { isSettingQAData = false }
+        do {
+            try await repository.replaceQAData(with: scenario)
+            qaScenario = scenario
+            selectedDetail = nil
+            exportURL = nil
+            visualSummaries = [:]
+            message = nil
+            await refresh()
+        } catch {
+            message = "The QA fixture could not be loaded."
+        }
+    }
+    #endif
+
     init(runtime: PhoneTransferRuntime = .shared) {
         self.repository = runtime.repository
         self.diagnosticRepository = runtime.diagnosticRepository
@@ -170,6 +194,22 @@ final class PhoneSessionLibraryModel: ObservableObject {
             await refreshOutboxProgress()
         default:
             break
+        }
+    }
+
+    func addManualSession(_ draft: ManualSessionDraft) async -> UUID? {
+        guard let repository else {
+            message = "Local iPhone storage is unavailable. The session was not saved."
+            return nil
+        }
+        do {
+            let record = try await repository.addManualSession(draft)
+            message = nil
+            await refresh()
+            return record.sessionID
+        } catch {
+            message = "The session could not be saved. Check the date and duration, then try again."
+            return nil
         }
     }
 

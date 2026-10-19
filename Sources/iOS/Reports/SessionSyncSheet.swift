@@ -65,6 +65,7 @@ struct SyncPresentation: Equatable {
         case upToDate
         case waitingForFirst
         case storageUnavailable
+        case manualLogsOnly
     }
 
     let kind: Kind
@@ -86,6 +87,8 @@ struct SyncPresentation: Equatable {
             return "Waiting for your first session"
         case .storageUnavailable:
             return "Storage unavailable"
+        case .manualLogsOnly:
+            return "Manual logs saved on iPhone"
         }
     }
 
@@ -98,6 +101,7 @@ struct SyncPresentation: Equatable {
         case .upToDate: return "checkmark.icloud"
         case .waitingForFirst: return "tray"
         case .storageUnavailable: return "exclamationmark.triangle.fill"
+        case .manualLogsOnly: return "iphone"
         }
     }
 
@@ -108,6 +112,7 @@ struct SyncPresentation: Equatable {
         case .pendingUploads: return .secondary
         case .upToDate: return PerformanceTheme.accent
         case .waitingForFirst: return .secondary
+        case .manualLogsOnly: return .secondary
         }
     }
 
@@ -137,6 +142,10 @@ struct SyncPresentation: Equatable {
             self.init(kind: .waitingForFirst, detail: nil)
             return
         }
+        if model.sessions.allSatisfy(\.isManualEntry) {
+            self.init(kind: .manualLogsOnly, detail: nil)
+            return
+        }
         self.init(kind: .upToDate, detail: nil)
     }
 
@@ -160,7 +169,7 @@ struct SessionSyncSheet: View {
                     section(title: "Apple Watch") {
                         row(
                             "Sessions on this iPhone",
-                            value: "\(model.sessions.count)"
+                            value: "\(model.sessions.filter { !$0.isManualEntry }.count)"
                         )
                         row(
                             "Receiving now",
@@ -172,7 +181,7 @@ struct SessionSyncSheet: View {
                         if model.outboxAvailable {
                             row(
                                 "Uploaded",
-                                value: "\(model.outboxPushedCount) of \(model.sessions.count)"
+                                value: "\(model.outboxPushedCount) of \(model.sessions.filter { !$0.isManualEntry }.count)"
                             )
                             row(
                                 "Waiting to upload",
@@ -214,11 +223,19 @@ struct SessionSyncSheet: View {
                             .disabled(isRetrying || model.outboxPendingCount == 0)
                         } else {
                             Text(
-                                "Backup is not configured on this iPhone. Your sessions remain safe on this device and on your Watch."
+                                "Backup is not configured on this iPhone. Watch recordings keep their Watch copy. Manual logs stay on this iPhone."
                             )
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         }
+                    }
+
+                    section(title: "Manual logs") {
+                        row("Saved on this iPhone", value: "\(model.sessions.filter(\.isManualEntry).count)")
+                        Text("Manual logs do not upload or create a Watch copy.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(PerformanceTheme.cardInset)
                     }
 
                     if let message = model.message {
@@ -239,6 +256,9 @@ struct SessionSyncSheet: View {
                 }
             }
         }
+        #if DEBUG && targetEnvironment(simulator)
+        .modifier(SimulatorQAEnvironment(model: model))
+        #endif
     }
 
     /// Presents raw transport errors as sentences a reader can act on. The
@@ -277,15 +297,7 @@ struct SessionSyncSheet: View {
     }
 
     private func row(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.subheadline)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
+        AdaptiveDetailRow(title: title, value: value)
         .padding(.horizontal, PerformanceTheme.cardInset)
         .padding(.vertical, 11)
     }

@@ -78,21 +78,10 @@ struct HeartRateReportView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    Rectangle().fill(.clear).contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    guard let plot = proxy.plotFrame else { return }
-                                    let x = value.location.x - geometry[plot].origin.x
-                                    if let minute: Double = proxy.value(atX: x) {
-                                        selectedSeconds = max(0, minute * 60)
-                                    }
-                                }
-                        )
-                }
-            }
+            .chartXSelection(value: Binding(
+                get: { selectedSeconds.map { $0 / 60 } },
+                set: { selectedSeconds = $0.map { max(0, $0 * 60) } }
+            ))
             .frame(height: 200)
             .accessibilityLabel("Heart-rate trace across the session")
 
@@ -235,14 +224,7 @@ struct HeartRateReportView: View {
     }
 
     private func coverageRow(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title).font(.subheadline)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
+        AdaptiveDetailRow(title: title, value: value)
     }
 }
 
@@ -349,7 +331,7 @@ struct MovementReportView: View {
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
             if let comparison {
-                HStack(spacing: 0) {
+                AdaptiveMetricGroup {
                     StatBlock(value: String(format: "%.2f g", comparison.opening), caption: "First 15 min")
                     StatBlock(value: String(format: "%.2f g", comparison.closing), caption: "Last 15 min")
                 }
@@ -407,6 +389,14 @@ struct RecordingQualityReportView: View {
 
     private var lifecycleCard: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if detail.record.isManualEntry {
+                Text("Manual log")
+                    .font(.headline)
+                    .foregroundStyle(PerformanceTheme.primaryText)
+                Text("Only the date, duration, and type were entered. No sensor readings were recorded.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
             Text("Recording state")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
@@ -428,6 +418,7 @@ struct RecordingQualityReportView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .performanceCard()
@@ -439,7 +430,11 @@ struct RecordingQualityReportView: View {
             Text("Capture evidence")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            if let latest {
+            if detail.record.isManualEntry {
+                Text("No sensors were used for this log.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else if let latest {
                 qualityRow("Motion source", captureSourceText(latest.source))
                 qualityRow("Accelerometer samples", "\(latest.accelerometerSampleCount)")
                 qualityRow("Device-motion samples", "\(latest.deviceMotionSampleCount)")
@@ -467,6 +462,11 @@ struct RecordingQualityReportView: View {
             Text("Health save outcome")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
+            if detail.record.isManualEntry {
+                Label("Manual logs are not written to Health.", systemImage: "iphone")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
             Label {
                 Text(healthSaveText(detail.record.completion.healthKitSaveOutcome))
             } icon: {
@@ -475,20 +475,14 @@ struct RecordingQualityReportView: View {
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .performanceCard()
     }
 
     private func qualityRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.subheadline)
-            Spacer()
-            Text(value)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-        }
+        AdaptiveDetailRow(title: title, value: value)
     }
 
     private func healthSaveSymbol(_ outcome: HealthKitSaveOutcomeV1) -> String {
@@ -639,14 +633,7 @@ struct SessionDetailsView: View {
     }
 
     private func provenanceRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title).font(.subheadline)
-            Spacer()
-            Text(value)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.trailing)
-        }
+        AdaptiveDetailRow(title: title, value: value, valueFont: .footnote.weight(.medium))
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {

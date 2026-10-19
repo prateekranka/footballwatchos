@@ -43,6 +43,9 @@ public actor FileSessionRepository {
 
         public var id: UUID { sessionID }
         public var startedAt: Date { sessionEnvelope.startedAt }
+        public var isManualEntry: Bool {
+            completion.summary?.duration?.provenance == .userEntered
+        }
 
         public init(
             transferEnvelope: SessionTransferEnvelopeV1,
@@ -287,6 +290,93 @@ public actor FileSessionRepository {
         return deliveryID
     }
 
+    /// Uses the same checksummed vault as Watch packages, without creating a
+    /// Watch receipt or fabricating HealthKit/motion evidence.
+    func addManualSession(_ draft: ManualSessionDraft, now: Date = .now) throws -> SessionRecord {
+        try draft.validate(now: now)
+        let sessionID = UUID()
+        let envelope = SessionEnvelopeV1(
+            sessionID: sessionID,
+            createdAt: now,
+            startedAt: draft.startedAt,
+            captureSource: .unavailable(reason: .captureNotStarted),
+            initialAccelerometerAvailability: .unavailable(reason: .captureNotStarted),
+            initialDeviceMotionAvailability: .unavailable(reason: .captureNotStarted),
+            sessionType: draft.sessionType
+        )
+        let completion = SessionCompletionV1(
+            endedAt: draft.startedAt.addingTimeInterval(Double(draft.durationMinutes) * 60),
+            lifecycle: .completed,
+            summary: SessionSummaryMetricsV1(
+                duration: SessionMetricV1(
+                    value: Double(draft.durationMinutes) * 60,
+                    unit: .seconds,
+                    provenance: .userEntered
+                )
+            ),
+            healthKitSaveOutcome: .unavailable(reason: .notAttempted)
+        )
+        let draftURL = rootDirectory.appendingPathComponent("manual-\(sessionID.uuidString).footysession")
+        defer { try? fileManager.removeItem(at: draftURL) }
+        try FootySessionPackageV1.writePackage(
+            frames: [
+                FootySessionFrameV1(payload: .envelope(envelope)),
+                FootySessionFrameV1(payload: .completion(completion)),
+            ],
+            to: draftURL
+        )
+        let inspected = try SessionTransferCodecV1.inspectCompletePackage(at: draftURL)
+        let metadata = inspected.transferEnvelope
+        let targetURL = packageURL(sessionID: sessionID, digest: metadata.packageDigest)
+        try fileManager.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Write metadata first so startup can adopt a package after a crash
+        // between its move and index persistence.
+        try writeDataAtomically(
+            SessionTransferCodecV1.encodeTransferEnvelope(metadata),
+            to: storedMetadataURL(for: targetURL)
+        )
+        try fileManager.moveItem(at: draftURL, to: targetURL)
+        let record = SessionRecord(
+            transferEnvelope: metadata,
+            sessionEnvelope: inspected.sessionEnvelope,
+            completion: inspected.completion
+        )
+        index = Index(schemaVersion: 1, entries: sorted(index.entries + [record]))
+        try writeJSONAtomically(index, to: indexURL)
+        return record
+    }
+
+    #if DEBUG && targetEnvironment(simulator)
+    func replaceQAData(with scenario: QASessionScenario) throws {
+        guard rootDirectory.lastPathComponent == "FootballPerformanceQA" else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        // This path is a separate QA vault, never the player's vault.
+        for entry in try fileManager.contentsOfDirectory(at: rootDirectory, includingPropertiesForKeys: nil) {
+            try fileManager.removeItem(at: entry)
+        }
+        for directory in [incomingDirectory, packagesDirectory, quarantineDirectory, receiptsDirectory] {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        index = Index(schemaVersion: 1, entries: [])
+        tombstones = TombstoneStore(schemaVersion: 1, entries: [])
+        for frames in QASessionFixtures.packages(for: scenario) {
+            let deliveryID = UUID().uuidString.lowercased()
+            let draftURL = rootDirectory.appendingPathComponent("fixture-\(deliveryID).footysession")
+            try FootySessionPackageV1.writePackage(frames: frames, to: draftURL)
+            let inspected = try SessionTransferCodecV1.inspectCompletePackage(at: draftURL)
+            let metadata = inspected.transferEnvelope
+            let targetURL = packageURL(sessionID: metadata.sessionID, digest: metadata.packageDigest)
+            try fileManager.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try writeDataAtomically(SessionTransferCodecV1.encodeTransferEnvelope(metadata), to: storedMetadataURL(for: targetURL))
+            try fileManager.moveItem(at: draftURL, to: targetURL)
+            let record = SessionRecord(transferEnvelope: metadata, sessionEnvelope: inspected.sessionEnvelope, completion: inspected.completion)
+            index = Index(schemaVersion: 1, entries: index.entries + [record])
+        }
+        try writeJSONAtomically(index, to: indexURL)
+    }
+    #endif
+
     public func sessions() -> [SessionRecord] {
         sorted(index.entries)
     }
@@ -479,6 +569,10 @@ public actor FileSessionRepository {
                 "package.\(FootySessionPackageV1.fileExtension)",
                 isDirectory: false
             )
+            try SessionTransferGzipV1.decompressPackageIfNeeded(
+                at: sourceURL,
+                expectedByteCount: metadata.byteCount
+            )
             let inspected = try SessionTransferCodecV1.validate(packageAt: sourceURL, matches: metadata)
 
             if tombstones.entries.contains(where: {
@@ -667,7 +761,7 @@ public actor FileSessionRepository {
         // A package that survived a crash after promotion but before index or
         // receipt persistence becomes an ordinary durable import here. The
         // coordinator will requeue these persisted payloads after activation.
-        for record in index.entries {
+        for record in index.entries where !record.isManualEntry {
             _ = try persistReceipt(for: record)
         }
     }

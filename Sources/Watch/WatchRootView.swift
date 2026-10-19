@@ -81,6 +81,14 @@ private struct StartFootballView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
+                Picker("Session type", selection: $recorder.selectedSessionType) {
+                    ForEach(FootballSessionTypeV1.allCases) { type in
+                        Text(type.title).tag(type)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .accessibilityIdentifier("watch-session-type")
+
                 Button(action: recorder.startCountdown) {
                     Label("Start Football", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
@@ -466,13 +474,20 @@ private struct ActiveFootballView: View {
             || snapshot.deviceMotion.lastError != nil
         let maximumGap = max(snapshot.accelerometer.maxGap, snapshot.deviceMotion.maxGap)
         let degraded = hasStreamError || maximumGap >= 5
+        let unavailable: Bool
+        if case .unavailable = snapshot.source { unavailable = true } else { unavailable = false }
+        let hasSamples = snapshot.accelerometer.sampleCount > 0 || snapshot.deviceMotion.sampleCount > 0
+        let label = unavailable ? "Motion unavailable"
+            : degraded ? "Motion degraded"
+            : hasSamples ? "Motion OK" : "Waiting for motion"
+        let tint: Color = unavailable || degraded ? .orange : hasSamples ? accentGreen : .secondary
         return HStack(spacing: 4) {
             Circle()
-                .fill(degraded ? Color.orange : accentGreen)
+                .fill(tint)
                 .frame(width: 6, height: 6)
-            Text(degraded ? "Motion degraded" : "Motion OK")
+            Text(label)
                 .font(.caption2)
-                .foregroundStyle(degraded ? Color.orange : Color.primary)
+                .foregroundStyle(unavailable || degraded ? Color.orange : Color.primary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
@@ -617,7 +632,7 @@ private struct HoldToFinishButton: View {
                 }
             }
             .foregroundStyle(.white)
-            .scaleEffect(isPressing ? 0.97 : 1)
+            .scaleEffect(!reduceMotion && isPressing ? 0.97 : 1)
             .animation(holdAnimation, value: isPressing)
             .animation(holdAnimation, value: displayProgress)
             .contentShape(Rectangle())

@@ -288,6 +288,16 @@ actor WatchTransferOutbox {
         sessionsDirectory.appendingPathComponent(record.packageFilename, isDirectory: false)
     }
 
+    func compressedTransferURL(for record: WatchTransferOutboxRecordV1) throws -> URL {
+        let directory = outboxDirectory.appendingPathComponent("Compressed", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("\(record.key.storageKey).footysession.gz")
+        if !fileManager.fileExists(atPath: url.path) {
+            try SessionTransferGzipV1.compressPackage(at: packageURL(for: record), to: url)
+        }
+        return url
+    }
+
     func recordFrameworkCompletion(
         for key: WatchTransferOutboxKeyV1,
         errorDescription: String?,

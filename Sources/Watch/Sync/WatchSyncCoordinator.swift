@@ -250,8 +250,8 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
                 await self?.refreshCachedStateNow()
 
                 for record in records {
-                    let packageURL = await outbox.packageURL(for: record)
                     do {
+                        let packageURL = try await outbox.compressedTransferURL(for: record)
                         let envelope = SessionTransferEnvelopeV1(
                             sessionID: record.key.sessionID,
                             packageDigest: record.key.packageDigest,
@@ -260,8 +260,6 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
                         )
                         let metadata = try SessionTransferCodecV1.encodeTransferEnvelope(envelope)
                         _ = await MainActor.run {
-                            // The package is immutable and retained by the
-                            // repository. WC owns only this transfer request.
                             session.transferFile(
                                 packageURL,
                                 metadata: [SessionTransferCodecV1.metadataKey: metadata]

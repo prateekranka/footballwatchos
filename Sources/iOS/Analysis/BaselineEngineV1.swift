@@ -146,6 +146,7 @@ enum BaselineEngineV1 {
 
     /// Deterministic validity gate for baseline and trend work.
     static func isValidSession(_ record: FileSessionRepository.SessionRecord) -> Bool {
+        guard !record.isManualEntry else { return false }
         guard record.completion.lifecycle == .completed else { return false }
         guard let summary = record.completion.summary else { return false }
         guard let duration = summary.duration, duration.value >= minimumDurationSeconds else { return false }

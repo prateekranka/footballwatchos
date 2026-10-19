@@ -6,9 +6,35 @@ import SwiftUI
 struct SettingsHomeView: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
+    @State private var showsOnboarding = false
 
     var body: some View {
         Form {
+            #if DEBUG && targetEnvironment(simulator)
+            if model.isUIQA {
+                Section("Simulator QA · synthetic data") {
+                    Picker("Data fixture", selection: Binding(
+                        get: { model.qaScenario },
+                        set: { scenario in Task { await model.setQAData(scenario) } }
+                    )) {
+                        ForEach(QASessionScenario.allCases) { scenario in
+                            Text(scenario.title).tag(scenario)
+                        }
+                    }
+                    .accessibilityIdentifier("qa-data-fixture")
+                    .disabled(model.isSettingQAData)
+                    Picker("Layout stress", selection: $model.qaLayout) {
+                        ForEach(SimulatorQALayout.allCases) { layout in
+                            Text(layout.title).tag(layout)
+                        }
+                    }
+                    .accessibilityIdentifier("qa-layout-stress")
+                    if model.isSettingQAData { ProgressView("Loading fixture") }
+                    Text("Demo data / Worst case / Empty / One / 1,000 rows. This toggle is absent from Release builds.")
+                        .font(.caption)
+                }
+            }
+            #endif
             Section("Appearance") {
                 Picker("Appearance", selection: $appearancePreference) {
                     ForEach(AppearancePreference.allCases) { preference in
@@ -46,6 +72,10 @@ struct SettingsHomeView: View {
                 )
             }
 
+            Section("Getting started") {
+                Button("Review onboarding") { showsOnboarding = true }
+            }
+
             Section("Advanced") {
                 NavigationLink("Watch diagnostics") {
                     WatchDiagnosticsView()
@@ -58,6 +88,9 @@ struct SettingsHomeView: View {
             }
         }
         .navigationTitle("Settings")
+        .fullScreenCover(isPresented: $showsOnboarding) {
+            OnboardingView { showsOnboarding = false }
+        }
     }
 
     private var storageSummary: String {

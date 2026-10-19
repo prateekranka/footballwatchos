@@ -31,6 +31,7 @@ func provenanceText(_ provenance: MetricProvenanceV1) -> String {
     case .coreMotionBatched: "Batched Core Motion"
     case .coreMotionFallback: "Foreground Core Motion"
     case .capturedDeviceEstimate: "Captured device estimate"
+    case .userEntered: "Entered by you"
     }
 }
 

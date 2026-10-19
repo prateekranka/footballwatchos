@@ -36,8 +36,11 @@ public actor SessionPushOutbox {
         self.state = (try? Self.load(from: self.stateURL)) ?? State()
     }
 
-    public func enqueue(sessionID: UUID, repository: FileSessionRepository) {
+    public func enqueue(sessionID: UUID, repository: FileSessionRepository) async {
         self.repository = repository
+        let records = await repository.sessions()
+        guard let record = records.first(where: { $0.sessionID == sessionID }),
+              !record.isManualEntry else { return }
         guard !state.pushed.contains(sessionID), !state.pending.contains(sessionID) else { return }
         state.pending.append(sessionID)
         saveState()

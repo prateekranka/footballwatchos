@@ -13,19 +13,23 @@ enum PerformanceTheme {
     // MARK: - Color
 
     /// Confident football green. The single primary accent.
-    static let accent = adaptive(light: UIColor(red: 0.13, green: 0.55, blue: 0.30, alpha: 1),
+    static let accent = adaptive(light: UIColor(red: 18.0 / 255, green: 108.0 / 255, blue: 53.0 / 255, alpha: 1),
                                  dark: UIColor(red: 0.22, green: 0.72, blue: 0.42, alpha: 1))
 
+    /// Text on the primary button stays legible in both appearances.
+    static let onAccent = adaptive(light: .white,
+                                   dark: UIColor(red: 8.0 / 255, green: 36.0 / 255, blue: 18.0 / 255, alpha: 1))
+
     /// Heart-rate red. Reserved for heart-rate evidence.
-    static let heartRate = adaptive(light: UIColor(red: 0.82, green: 0.21, blue: 0.22, alpha: 1),
+    static let heartRate = adaptive(light: UIColor(red: 180.0 / 255, green: 38.0 / 255, blue: 43.0 / 255, alpha: 1),
                                     dark: UIColor(red: 1.00, green: 0.42, blue: 0.42, alpha: 1))
 
     /// Movement cyan. Reserved for wrist-motion evidence.
-    static let movement = adaptive(light: UIColor(red: 0.10, green: 0.55, blue: 0.79, alpha: 1),
+    static let movement = adaptive(light: UIColor(red: 0, green: 102.0 / 255, blue: 141.0 / 255, alpha: 1),
                                    dark: UIColor(red: 0.30, green: 0.72, blue: 1.00, alpha: 1))
 
     /// Amber for degraded/interrupted capture states.
-    static let warning = adaptive(light: UIColor(red: 0.78, green: 0.58, blue: 0.05, alpha: 1),
+    static let warning = adaptive(light: UIColor(red: 118.0 / 255, green: 84.0 / 255, blue: 0, alpha: 1),
                                   dark: UIColor(red: 1.00, green: 0.76, blue: 0.28, alpha: 1))
 
     /// Navy-black primary text instead of harsh pure black in light mode.
@@ -93,10 +97,50 @@ extension View {
 /// critically damped spring. Reduce Motion replaces the scale with an opacity
 /// change so feedback is never lost.
 struct PressableStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.98 : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
-            .animation(PerformanceTheme.pressAnimation, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : PerformanceTheme.pressAnimation, value: configuration.isPressed)
+    }
+}
+
+/// Metrics need their full width when the user chooses accessibility text.
+struct AdaptiveMetricGroup<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var textSize
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        let layout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 0))
+        layout { content }
+    }
+}
+
+/// Long source labels remain whole rather than competing with a value column.
+struct AdaptiveDetailRow: View {
+    let title: String
+    let value: String
+    var valueFont: Font = .subheadline.weight(.medium)
+    @Environment(\.dynamicTypeSize) private var textSize
+
+    var body: some View {
+        let layout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 3))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+        layout {
+            Text(title).font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+            if !textSize.isAccessibilitySize { Spacer() }
+            Text(value)
+                .font(valueFont)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(textSize.isAccessibilitySize ? .leading : .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 }

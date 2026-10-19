@@ -74,12 +74,23 @@ struct SessionOverviewScreen: View {
     private func overview(_ detail: FileSessionRepository.SessionDetail) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
+                Text(SessionRowFormatting.typeAndSource(detail.record))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if detail.record.isManualEntry {
+                    Label("Only the date, duration, and type were entered. No sensor readings were recorded.", systemImage: "square.and.pencil")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .performanceCard()
+                }
                 summaryRow(detail.record)
-                UnfoldedHeroCard(
-                    detail: detail,
-                    observation: model.visualSummaries[sessionID]?.observation,
-                    selectedSeconds: $selectedSeconds
-                )
+                if !detail.record.isManualEntry {
+                    UnfoldedHeroCard(
+                        detail: detail,
+                        observation: model.visualSummaries[sessionID]?.observation,
+                        selectedSeconds: $selectedSeconds
+                    )
+                }
                 exploreSection(detail)
             }
             .padding(.horizontal, PerformanceTheme.screenInset)
@@ -91,7 +102,7 @@ struct SessionOverviewScreen: View {
     /// Three compact metrics. Only recorded values appear; missing evidence
     /// shows an explicit dash.
     private func summaryRow(_ record: FileSessionRepository.SessionRecord) -> some View {
-        HStack(spacing: 0) {
+        AdaptiveMetricGroup {
             StatBlock(
                 value: SessionRowFormatting.distanceLabel(meters: SessionRowFormatting.summaryDistance(record)),
                 caption: "Distance"
@@ -177,6 +188,7 @@ struct SessionOverviewScreen: View {
     }
 
     private func recordQualityLabel(_ detail: FileSessionRepository.SessionDetail) -> String? {
+        if detail.record.isManualEntry { return "Manual log" }
         switch SessionRowFormatting.state(detail.record) {
         case .completed:
             return detail.diagnostics.isEmpty ? nil : "Recorded"
@@ -200,41 +212,69 @@ struct ExploreRow: View {
     let title: String
     let subtitle: String
     let trailing: String?
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
-        HStack(spacing: 12) {
+        let rowLayout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        rowLayout {
+            if textSize.isAccessibilitySize {
+                HStack {
+                    rowIcon
+                    Spacer()
+                    disclosure
+                }
+            } else {
+                rowIcon
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(PerformanceTheme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(textSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if textSize.isAccessibilitySize, let trailing {
+                    Text(trailing)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if !textSize.isAccessibilitySize {
+                Spacer(minLength: 8)
+                if let trailing {
+                    Text(trailing)
+                        .font(.footnote.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                disclosure
+            }
+        }
+        .performanceCard(padding: 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var rowIcon: some View {
             Image(systemName: icon)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(tint)
                 .frame(width: 34, height: 34)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                 .accessibilityHidden(true)
+    }
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(PerformanceTheme.primaryText)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-
-            Spacer(minLength: 8)
-
-            if let trailing {
-                Text(trailing)
-                    .font(.footnote.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
+    private var disclosure: some View {
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
-        }
-        .performanceCard(padding: 14)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -249,16 +289,20 @@ struct UnfoldedHeroCard: View {
     @Binding var selectedSeconds: Double?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var textSize
 
     private var startedAt: Date { detail.record.startedAt }
 
     var body: some View {
+        let headingLayout = textSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+            headingLayout {
                 Text("How it unfolded")
                     .font(.headline)
                     .foregroundStyle(PerformanceTheme.primaryText)
-                Spacer()
+                if !textSize.isAccessibilitySize { Spacer() }
                 if let duration = SessionRowFormatting.summaryDuration(detail.record) {
                     Text(SessionRowFormatting.durationLabel(duration))
                         .font(.caption)
@@ -296,7 +340,7 @@ struct UnfoldedHeroCard: View {
                 .accessibilityHint("Shows this stretch in the chart")
             }
 
-            legend
+            if !heartRateSegments.isEmpty || !distanceMinuteBars.isEmpty { legend }
         }
         .performanceCard()
         .accessibilityElement(children: .contain)
@@ -359,9 +403,16 @@ struct UnfoldedHeroCard: View {
 
     // MARK: - Chart lanes
 
+    @ViewBuilder
     private var heartRateLane: some View {
         let segments = heartRateSegments
-        return Chart {
+        if segments.isEmpty {
+            Label("No heart-rate readings", systemImage: "heart.slash")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+        Chart {
             ForEach(segments) { segment in
                 ForEach(segment.points) { point in
                     heartRateArea(point)
@@ -392,12 +443,14 @@ struct UnfoldedHeroCard: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .chartOverlay { proxy in
-            chartSelectionOverlay(proxy: proxy)
-        }
+        .chartXSelection(value: Binding(
+            get: { selectedSeconds.map { $0 / 60 } },
+            set: { selectedSeconds = $0.map { max(0, $0 * 60) } }
+        ))
         .frame(height: 170)
         .accessibilityLabel("Heart rate across the session")
         .accessibilityValue(selectedAccessibilityText)
+        }
     }
 
     private func heartRateArea(_ point: ChartPreparationV1.ChartSample) -> some ChartContent {
@@ -431,23 +484,6 @@ struct UnfoldedHeroCard: View {
             .annotation(position: .top, spacing: 0) {
                 selectedValueLabel
             }
-    }
-
-    private func chartSelectionOverlay(proxy: ChartProxy) -> some View {
-        GeometryReader { geometry in
-            Rectangle()
-                .fill(.clear)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard let plot = proxy.plotFrame else { return }
-                            let x = value.location.x - geometry[plot].origin.x
-                            guard let rawMinute: Double = proxy.value(atX: x) else { return }
-                            selectedSeconds = max(0, rawMinute * 60)
-                        }
-                )
-        }
     }
 
     @ViewBuilder
@@ -484,9 +520,9 @@ struct UnfoldedHeroCard: View {
         let peak = bars.map(\.meters).max() ?? 0
         return VStack(alignment: .leading, spacing: 4) {
             if bars.isEmpty {
-                Text("No distance evidence was recorded.")
+                Text("No per-minute distance readings.")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             } else {
                 Chart {
                     ForEach(bars) { bar in

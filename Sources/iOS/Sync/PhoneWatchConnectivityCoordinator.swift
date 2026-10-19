@@ -130,7 +130,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
             do {
                 try await repository.reconcileOnStartup()
                 let sessions = await repository.sessions()
-                for session in sessions {
+                for session in sessions where !session.isManualEntry {
                     await outbox.enqueue(
                         sessionID: session.sessionID,
                         repository: repository
@@ -200,11 +200,32 @@ final class PhoneTransferRuntime: @unchecked Sendable {
 
     private init() {
         do {
-            let configuration = try FileSessionRepository.Configuration.applicationSupport()
+            var configuration = try FileSessionRepository.Configuration.applicationSupport()
+            #if DEBUG && targetEnvironment(simulator)
+            let isUnitTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA") || isUnitTesting
+            if isolatedTesting {
+                configuration = FileSessionRepository.Configuration(
+                    rootDirectory: configuration.rootDirectory.deletingLastPathComponent()
+                        .appendingPathComponent(isUnitTesting ? "FootballPerformanceUnitTests" : "FootballPerformanceQA", isDirectory: true)
+                )
+            }
+            #endif
             let repository = try FileSessionRepository(configuration: configuration)
             let diagnosticRepository = try PhoneDiagnosticRepository(
                 rootDirectory: configuration.rootDirectory
             )
+            #if DEBUG && targetEnvironment(simulator)
+            if isolatedTesting {
+                self.repository = repository
+                self.diagnosticRepository = diagnosticRepository
+                self.pipelinePushService = nil
+                self.sessionPushOutbox = nil
+                self.coordinator = nil
+                self.startupErrorDescription = nil
+                return
+            }
+            #endif
             let pipelinePushService = PipelinePushService()
             let sessionPushOutbox = SessionPushOutbox(repository: repository)
             self.repository = repository

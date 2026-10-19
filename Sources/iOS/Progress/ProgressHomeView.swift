@@ -7,6 +7,8 @@ import SwiftUI
 /// includes the current session in its own pool.
 struct ProgressHomeView: View {
     @EnvironmentObject private var model: PhoneSessionLibraryModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var textSize
     @State private var measure: TrendMeasure = .distancePerMinute
     @State private var range: ProgressRange = .fourWeeks
 
@@ -34,8 +36,8 @@ struct ProgressHomeView: View {
             .padding(.horizontal, PerformanceTheme.screenInset)
             .padding(.top, 8)
             .padding(.bottom, 24)
-            .animation(PerformanceTheme.replaceAnimation, value: measure)
-            .animation(PerformanceTheme.replaceAnimation, value: range)
+            .animation(reduceMotion ? nil : PerformanceTheme.replaceAnimation, value: measure)
+            .animation(reduceMotion ? nil : PerformanceTheme.replaceAnimation, value: range)
         }
         .background(Color(.systemGroupedBackground))
         .scrollBounceBehavior(.basedOnSize)
@@ -117,11 +119,11 @@ struct ProgressHomeView: View {
         switch baselineStatus {
         case .established(let value, let count):
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                AdaptiveMetricGroup {
                     Text("Your recent baseline")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(PerformanceTheme.primaryText)
-                    Spacer()
+                    if !textSize.isAccessibilitySize { Spacer() }
                     Text(measure.formatted(value))
                         .font(.subheadline.weight(.semibold))
                         .monospacedDigit()
@@ -183,7 +185,7 @@ struct ProgressHomeView: View {
                 .foregroundStyle(PerformanceTheme.primaryText)
             VStack(spacing: 0) {
                 ForEach(trendSessions.prefix(4)) { record in
-                    HStack {
+                    AdaptiveMetricGroup {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(SessionRowFormatting.dayLabel(record.startedAt))
                                 .font(.subheadline.weight(.medium))
@@ -195,7 +197,7 @@ struct ProgressHomeView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         }
-                        Spacer()
+                        if !textSize.isAccessibilitySize { Spacer() }
                         Text(measure.formatted(measure.value(of: record) ?? 0))
                             .font(.subheadline.weight(.medium))
                             .monospacedDigit()
@@ -313,14 +315,15 @@ struct TrendCard: View {
     let measure: TrendMeasure
     let sessions: [FileSessionRepository.SessionRecord]
     let baseline: BaselineEngineV1.BaselineStatus
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
+            AdaptiveMetricGroup {
                 Text(measure.headline)
                     .font(.headline)
                     .foregroundStyle(PerformanceTheme.primaryText)
-                Spacer()
+                if !textSize.isAccessibilitySize { Spacer() }
                 if let latest = sessions.first, let value = measure.value(of: latest) {
                     Text(measure.formatted(value))
                         .font(.title3.weight(.bold))

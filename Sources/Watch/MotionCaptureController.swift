@@ -19,6 +19,7 @@ struct MotionStreamMetrics: Sendable, Equatable {
 }
 
 struct MotionCaptureSnapshot: Sendable, Equatable {
+    let source: MotionCaptureSourceV1
     let sourceLabel: String
     let sourceDetail: String
     let accelerometer: MotionStreamMetrics
@@ -28,6 +29,7 @@ struct MotionCaptureSnapshot: Sendable, Equatable {
     var reportedDeviceMotionHz: Double? { deviceMotion.reportedHz }
 
     static let idle = MotionCaptureSnapshot(
+        source: .unavailable(reason: .captureNotStarted),
         sourceLabel: "Motion capture idle",
         sourceDetail: "No diagnostic stream is running.",
         accelerometer: .empty,
@@ -984,6 +986,7 @@ final class MotionCaptureController: ObservableObject {
 
     private func publishSnapshotFromStats() {
         snapshot = MotionCaptureSnapshot(
+            source: plan?.source ?? .unavailable(reason: .captureNotStarted),
             sourceLabel: plan?.sourceLabel ?? MotionCaptureSnapshot.idle.sourceLabel,
             sourceDetail: plan?.sourceDetail ?? MotionCaptureSnapshot.idle.sourceDetail,
             accelerometer: accelerometerStats.currentMetrics(),
