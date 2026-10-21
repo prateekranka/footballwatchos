@@ -4,7 +4,7 @@
 // c. A quick tap incorrectly finishes the recording.
 // d. A held finish fails to save or loses transfer status.
 // e. Diagnostics or saved details cannot open or return.
-// f. Process death loses the recoverable session or recovery cannot return home.
+// f. Process death resets elapsed time, loses capture, or creates a duplicate fragment.
 // g. The non-default session type cannot be selected, recorded, and saved.
 import XCTest
 
@@ -106,9 +106,21 @@ final class WatchUITests: XCTestCase {
     }
 
     @MainActor
-    func testFKillRelaunchAndExplicitRecovery() throws {
+    func testFKillRelaunchResumesRecording() throws {
         let app = try launch()
         defer { finishIfActive(app) }
+        let recovery = element("watch.recovery.open", in: app)
+        try reveal(recovery, in: app)
+        recovery.tap()
+        let savedCount = element("watch.recovery.saved", in: app)
+        try require(savedCount.waitForExistence(timeout: 15), "Saved session count did not load")
+        let savedBefore = lastInteger(savedCount.label)
+        let recoveredBefore = element("watch.recovery.recovered", in: app).label
+        try require(savedBefore >= 0, "Saved session count could not be read")
+        try require(lastInteger(element("watch.recovery.needed", in: app).label) == 0, "This journey needs no earlier unrecovered sessions")
+        observe("f-session-baseline", ["saved": String(savedBefore), "recovered": recoveredBefore])
+        capture("f-session-baseline", app)
+        try goBack(app)
         try start(app, prefix: "f")
         let elapsed = element("watch.elapsed", in: app)
         let tenSeconds = XCTNSPredicateExpectation(
@@ -119,7 +131,9 @@ final class WatchUITests: XCTestCase {
         )
         try require(XCTWaiter.wait(for: [tenSeconds], timeout: 25) == .completed, "Recording did not reach ten seconds")
         capture("f-before-terminate", app)
-        observe("f-before-terminate", ["elapsed": elapsed.label])
+        let preKillLabel = elapsed.label
+        let preKillSeconds = elapsedSeconds(preKillLabel)
+        observe("f-before-terminate", ["elapsed": preKillLabel])
         app.terminate()
         app.launch()
         try waitForReady(app)
@@ -130,35 +144,68 @@ final class WatchUITests: XCTestCase {
             "recoveryBadge": String(element("watch.recovery.attention", in: app).exists),
             "tree": app.debugDescription,
         ])
-        try require(element("watch.idle", in: app).exists, "Current recorder is expected to return to idle after process death")
-        XCTAssertFalse(element("watch.recording", in: app).exists)
-        let recovery = element("watch.recovery.open", in: app)
+        try require(element("watch.recording", in: app).waitForExistence(timeout: 20), "The same recording did not resume after relaunch")
+        XCTAssertFalse(element("watch.idle", in: app).exists)
+        let resumedLabel = elapsed.label
+        let resumedSeconds = elapsedSeconds(resumedLabel)
+        XCTAssertGreaterThanOrEqual(resumedSeconds, preKillSeconds, "Relaunch reset the original elapsed time")
+        let resumedAt = Date()
+        observe("f-resumed", ["beforeKill": preKillLabel, "resumedElapsed": resumedLabel])
+        capture("f-resumed-recording", app)
+        let continued = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                elapsed.exists && self.elapsedSeconds(elapsed.label) >= resumedSeconds + 5
+            },
+            object: nil
+        )
+        try require(XCTWaiter.wait(for: [continued], timeout: 15) == .completed, "Resumed recording timer stopped")
+        let beforeFinishLabel = elapsed.label
+        let postRelaunchSeconds = Int(Date().timeIntervalSince(resumedAt))
+        capture("f-resumed-before-finish", app)
+        try save(app, prefix: "f")
+        // A combined summary row is read-only text, which watchOS never reports as hittable.
+        let duration = element("watch.saved.duration", in: app)
+        try require(duration.waitForExistence(timeout: 10), "Saved duration row is missing")
+        let savedSeconds = clockSeconds(duration.label)
+        let gapWarning = app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS[c] %@", "capture had a gap"
+        )).firstMatch
+        XCTAssertTrue(gapWarning.exists, "The saved summary must disclose the capture gap")
+        observe("f-resumed-saved-duration", [
+            "beforeKill": preKillLabel,
+            "beforeFinish": beforeFinishLabel,
+            "postRelaunchSeconds": String(postRelaunchSeconds),
+            "savedDuration": duration.label,
+            "captureGap": gapWarning.label,
+        ])
+        XCTAssertGreaterThanOrEqual(savedSeconds, preKillSeconds + postRelaunchSeconds - 2)
+        XCTAssertGreaterThanOrEqual(savedSeconds, elapsedSeconds(beforeFinishLabel) - 2)
+        let done = element("watch.saved.done", in: app)
+        try reveal(done, in: app)
+        done.tap()
+        try require(element("watch.idle", in: app).waitForExistence(timeout: 10), "Saved Done did not return home")
         try reveal(recovery, in: app)
         capture("f-recovery-entry", app)
         recovery.tap()
         let needed = element("watch.recovery.needed", in: app)
         try require(needed.waitForExistence(timeout: 15), "Recovery counts did not load")
-        let before = needed.label
-        capture("f-recovery-before", app)
-        observe("f-recovery-before", ["needed": before, "tree": app.debugDescription])
-        try require(lastInteger(before) > 0, "The killed recording must be available for recovery")
-        let recover = element("watch.recovery.recover", in: app)
-        try reveal(recover, in: app)
-        recover.tap()
-        capture("f-recover-tapped", app)
-        let message = element("watch.recovery.message", in: app)
-        let completed = XCTNSPredicateExpectation(
+        let oneNewSession = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
-                message.exists && message.label.contains("Recovered") && recover.isEnabled
+                savedCount.exists && self.lastInteger(savedCount.label) == savedBefore + 1
             },
             object: nil
         )
-        try require(XCTWaiter.wait(for: [completed], timeout: 90) == .completed, "Recovery did not report a recovered session")
-        capture("f-recovery-completed", app)
-        observe("f-recovery-completed", ["message": message.label, "tree": app.debugDescription])
-        XCTAssertEqual(lastInteger(needed.label), 0)
-        try reveal(message, in: app)
-        capture("f-recovery-message", app)
+        try require(XCTWaiter.wait(for: [oneNewSession], timeout: 15) == .completed, "Finish must save exactly one new session")
+        XCTAssertEqual(lastInteger(needed.label), 0, "The resumed session must not leave a recovery fragment")
+        XCTAssertEqual(element("watch.recovery.recovered", in: app).label, recoveredBefore, "Relaunch must not create an interrupted copy")
+        capture("f-recovery-after-resumed-finish", app)
+        observe("f-recovery-after-resumed-finish", [
+            "needed": needed.label,
+            "savedBefore": String(savedBefore),
+            "savedAfter": savedCount.label,
+            "recovered": element("watch.recovery.recovered", in: app).label,
+            "tree": app.debugDescription,
+        ])
         let home = element("watch.recovery.home", in: app)
         try reveal(home, in: app)
         home.tap()
@@ -255,6 +302,16 @@ final class WatchUITests: XCTestCase {
         }
         app.launch()
         try waitForReady(app)
+        // Recordings now survive relaunch, so a workout an earlier journey left running
+        // comes back here; save it so every journey starts from Home.
+        if element("watch.recording", in: app).exists {
+            capture("launch-resumed-leftover", app)
+            try save(app, prefix: "launch-leftover")
+            let done = element("watch.saved.done", in: app)
+            try reveal(done, in: app)
+            done.tap()
+            _ = element("watch.idle", in: app).waitForExistence(timeout: 10)
+        }
         try require(element("watch.idle", in: app).exists, "App did not reach idle: \(app.debugDescription)")
         return app
     }
@@ -371,6 +428,13 @@ final class WatchUITests: XCTestCase {
         let numbers = label.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
         guard numbers.count >= 2 else { return -1 }
         return numbers[0] * 60 + numbers[1]
+    }
+
+    /// The saved summary shows hh:mm:ss, unlike the spoken minutes/seconds of the live timer.
+    private func clockSeconds(_ label: String) -> Int {
+        let numbers = label.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard !numbers.isEmpty else { return -1 }
+        return numbers.reduce(0) { $0 * 60 + $1 }
     }
 
     private func lastInteger(_ label: String) -> Int {

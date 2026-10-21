@@ -1,9 +1,19 @@
 import SwiftUI
+import WatchKit
+
+@MainActor
+final class FootballPerformanceWatchDelegate: NSObject, WKApplicationDelegate {
+    let recorder = WorkoutRecorder()
+
+    func handleActiveWorkoutRecovery() {
+        recorder.recoverActiveWorkout()
+    }
+}
 
 @main
 @MainActor
 struct FootballPerformanceWatchApp: App {
-    @StateObject private var recorder = WorkoutRecorder()
+    @WKApplicationDelegateAdaptor(FootballPerformanceWatchDelegate.self) private var delegate
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -13,8 +23,8 @@ struct FootballPerformanceWatchApp: App {
     var body: some Scene {
         WindowGroup {
             WatchRootView(
-                recorder: recorder,
-                motionCapture: recorder.motionCapture
+                recorder: delegate.recorder,
+                motionCapture: delegate.recorder.motionCapture
             )
         }
         .onChange(of: scenePhase) { _, newPhase in

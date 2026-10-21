@@ -1,5 +1,21 @@
 import Foundation
 
+public struct ActiveRecordingMarkerV1: Codable, Sendable, Equatable {
+    public let sessionID: UUID
+    public let partialFilename: String
+    public let startedAt: Date
+    public let sessionType: FootballSessionTypeV1
+    public let motionPlanSource: MotionCaptureSourceV1
+
+    init(envelope: SessionEnvelopeV1) {
+        sessionID = envelope.sessionID
+        partialFilename = "\(envelope.sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)"
+        startedAt = envelope.startedAt
+        sessionType = envelope.footballType
+        motionPlanSource = envelope.captureSource
+    }
+}
+
 public enum StoredSessionPackageKindV1: String, Codable, Sendable, Equatable {
     case sealed
     case partial
@@ -73,6 +89,10 @@ public struct SessionPackageMetadataV1: Sendable, Equatable {
 /// intact, and writes a new interrupted package from verified frames only.
 public actor WatchSessionRepository {
     public let sessionsDirectory: URL
+
+    private var activeRecordingURL: URL {
+        sessionsDirectory.deletingLastPathComponent().appendingPathComponent("ActiveRecording.json")
+    }
 
     private let fileManager: FileManager
     private let limits: SessionPackageReaderLimitsV1
@@ -153,6 +173,7 @@ public actor WatchSessionRepository {
                 policy: policy,
                 limits: limits
             )
+            try writeActiveRecording(ActiveRecordingMarkerV1(envelope: envelope))
             WatchLog.repository.info(
                 "startWriter: created \(writer.partialURL.lastPathComponent, privacy: .public)"
             )
@@ -165,6 +186,49 @@ public actor WatchSessionRepository {
             WatchLog.repository.logError("startWriter failed", error: error)
             throw error
         }
+    }
+
+    public func activeRecording() throws -> ActiveRecordingMarkerV1? {
+        guard fileManager.fileExists(atPath: activeRecordingURL.path) else { return nil }
+        let marker = try JSONDecoder().decode(
+            ActiveRecordingMarkerV1.self,
+            from: Data(contentsOf: activeRecordingURL)
+        )
+        guard marker.partialFilename == "\(marker.sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)" else {
+            throw SessionPackageError.sessionIdentityMismatch
+        }
+        return marker
+    }
+
+    public func writeActiveRecording(_ marker: ActiveRecordingMarkerV1) throws {
+        try JSONEncoder().encode(marker).write(to: activeRecordingURL, options: .atomic)
+    }
+
+    public func clearActiveRecording(sessionID: UUID? = nil) throws {
+        guard fileManager.fileExists(atPath: activeRecordingURL.path) else { return }
+        if let sessionID, try activeRecording()?.sessionID != sessionID { return }
+        try fileManager.removeItem(at: activeRecordingURL)
+    }
+
+    public func resumeWriter(sessionID: UUID) throws -> SessionPackageWriter {
+        try SessionPackageWriter.resume(
+            partialURL: partialURL(named: "\(sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)"),
+            sessionID: sessionID,
+            limits: limits
+        )
+    }
+
+    public func completeWriter(
+        _ writer: SessionPackageWriter,
+        completion: SessionCompletionV1
+    ) async throws -> URL {
+        let sealedURL = try await writer.complete(completion)
+        do {
+            try clearActiveRecording(sessionID: writer.sessionID)
+        } catch {
+            WatchLog.repository.logError("completeWriter: marker removal failed", error: error)
+        }
+        return sealedURL
     }
 
     /// Creates a newly named `.footysession` recovery package. The original
@@ -236,6 +300,9 @@ public actor WatchSessionRepository {
         try fileManager.moveItem(at: temporaryURL, to: recoveredURL)
 
         try? (recoveredURL as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
+        // The recovered copy is already durable; a stale marker only costs one
+        // no-op HealthKit recovery attempt on the next launch.
+        try? clearActiveRecording(sessionID: envelope.sessionID)
 
         let startedAt = scan.envelope?.startedAt
         let recordedDuration: TimeInterval? = {
@@ -328,6 +395,9 @@ public actor WatchSessionRepository {
             )
         }
         try fileManager.moveItem(at: originalURL, to: destinationURL)
+        if try activeRecording()?.partialFilename == filename {
+            try clearActiveRecording()
+        }
         return destinationURL.lastPathComponent
     }
 

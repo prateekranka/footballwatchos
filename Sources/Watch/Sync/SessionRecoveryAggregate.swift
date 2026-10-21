@@ -86,6 +86,7 @@ struct SessionRecoveryLogEntryV1: Sendable, Equatable, Identifiable {
 /// failed record is truthfully "waiting for iPhone" because the pipeline is
 /// still working it.
 struct SessionRecoveryAggregateV1: Sendable, Equatable {
+    let savedSessionCount: Int
     /// Unique sessions with a `.partial` on disk (recovered or not).
     let interruptedCount: Int
     /// Unique interrupted sessions without a `<stem>.recovered.*` copy.
@@ -115,11 +116,14 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
 
     static func compute(
         discovered: [StoredSessionPackageV1],
-        outboxRecords: [WatchTransferOutboxRecordV1]
+        outboxRecords: [WatchTransferOutboxRecordV1],
+        excludingPartialFilename: String? = nil
     ) -> SessionRecoveryAggregateV1 {
         var interrupted = Set<UUID>()
         var recovered = Set<UUID>()
+        var saved = Set<UUID>()
         for package in discovered {
+            if package.kind == .partial, package.filename == excludingPartialFilename { continue }
             guard let sessionID = SessionRecoveryFilenameV1.sessionID(from: package.filename) else {
                 continue
             }
@@ -127,6 +131,7 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
             case .partial:
                 interrupted.insert(sessionID)
             case .sealed:
+                saved.insert(sessionID)
                 if SessionRecoveryFilenameV1.isRecoveredCopy(package.filename) {
                     recovered.insert(sessionID)
                 }
@@ -165,6 +170,7 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
             && recovered.isSubset(of: imported)
 
         return SessionRecoveryAggregateV1(
+            savedSessionCount: saved.count,
             interruptedCount: interrupted.count,
             needsRecoveryCount: needsRecovery.count,
             recoveredCount: recovered.count,
