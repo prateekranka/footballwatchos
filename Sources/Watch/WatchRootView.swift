@@ -26,9 +26,15 @@ enum WatchEffortZone: Int, CaseIterable {
 
     static let fallbackMaximumHeartRate: Double = 190
 
+    /// Set from the player's age on the iPhone; 190 until the iPhone sends one.
+    static var playerMaximumHeartRate: Double {
+        let stored = UserDefaults.standard.double(forKey: PlayerProfileContextV1.maximumHeartRateKey)
+        return stored > 0 ? stored : fallbackMaximumHeartRate
+    }
+
     static func current(
         heartRate: Double?,
-        maximumHeartRate: Double = fallbackMaximumHeartRate
+        maximumHeartRate: Double = playerMaximumHeartRate
     ) -> WatchEffortZone? {
         guard let heartRate, heartRate.isFinite, heartRate > 0,
               maximumHeartRate.isFinite, maximumHeartRate > 0 else { return nil }

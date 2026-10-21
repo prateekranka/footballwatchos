@@ -267,3 +267,16 @@ public enum SessionTransferGzipV1 {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL)
     }
 }
+
+/// The player's maximum heart rate, sent from the iPhone (where the age is
+/// entered) to the Watch, which colors its live effort zones with it.
+public enum PlayerProfileContextV1 {
+    public static let maximumHeartRateKey = "playerMaxHeartRate"
+
+    /// Zero or missing means "not set"; the Watch then uses its fallback.
+    public static func maximumHeartRate(in context: [String: Any]) -> Double? {
+        guard let value = context[maximumHeartRateKey] as? Double,
+              value.isFinite, (100...230).contains(value) else { return nil }
+        return value
+    }
+}

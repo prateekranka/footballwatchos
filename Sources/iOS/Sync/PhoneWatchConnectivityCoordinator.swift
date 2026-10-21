@@ -43,6 +43,30 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         session.delegate = self
         session.activate()
         requeueDurableReceipts()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerProfileMayHaveChanged),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func playerProfileMayHaveChanged() {
+        sendPlayerProfile()
+    }
+
+    /// Application context keeps only the latest value and reaches the Watch
+    /// the next time it runs, so an age change made while the Watch is away
+    /// still arrives.
+    private func sendPlayerProfile() {
+        guard session.activationState == .activated,
+              session.isPaired,
+              session.isWatchAppInstalled else { return }
+        let age = UserDefaults.standard.integer(forKey: "playerAge")
+        let maximum = age > 0 ? PerformanceCoachV1.heartRateMax(age: age, observedPeak: nil) : 0
+        let key = PlayerProfileContextV1.maximumHeartRateKey
+        guard session.applicationContext[key] as? Double != maximum else { return }
+        try? session.updateApplicationContext([key: maximum])
     }
 
     func session(
@@ -54,6 +78,11 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         // descriptive value is intentionally local diagnostic information.
         _ = error.map { String(describing: $0) }
         requeueDurableReceipts()
+        sendPlayerProfile()
+    }
+
+    func sessionWatchStateDidChange(_ session: WCSession) {
+        sendPlayerProfile()
     }
 
     func session(_ session: WCSession, didReceive file: WCSessionFile) {

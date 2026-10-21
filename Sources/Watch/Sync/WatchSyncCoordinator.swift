@@ -184,6 +184,9 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
     }
 
     private func activatedOrUpdated() {
+        if let session {
+            Self.storePlayerProfile(session.receivedApplicationContext)
+        }
         reconcileOutstandingTransfers()
         submitClaimedRecordsIfEligible()
         submitPendingDiagnosticsIfEligible()
@@ -369,6 +372,22 @@ extension WatchSyncCoordinator: WCSessionDelegate {
                 self.outboxFailure = error.localizedDescription
                 self.stateGeneration &+= 1
             }
+        }
+    }
+
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Self.storePlayerProfile(applicationContext)
+    }
+
+    /// Zero clears the stored value, so removing the age on the iPhone
+    /// returns the Watch to its fallback.
+    nonisolated static func storePlayerProfile(_ context: [String: Any]) {
+        let key = PlayerProfileContextV1.maximumHeartRateKey
+        guard let value = context[key] as? Double else { return }
+        if let maximum = PlayerProfileContextV1.maximumHeartRate(in: context) {
+            UserDefaults.standard.set(maximum, forKey: key)
+        } else if value == 0 {
+            UserDefaults.standard.removeObject(forKey: key)
         }
     }
 
