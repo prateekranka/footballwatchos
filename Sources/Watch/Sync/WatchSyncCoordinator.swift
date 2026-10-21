@@ -97,6 +97,7 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
     private var cachedRecords: [String: WatchTransferOutboxRecordV1] = [:]
     private var outboxFailure: String?
     private var diagnosticSubmissionInProgress = false
+    private var receiptRetryTask: Task<Void, Never>?
 
     override init() {
         diagnosticJournal = WatchDiagnosticRuntime.shared.journal
@@ -174,6 +175,12 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
     /// synchronous and never fabricates transfer state.
     func outboxRecords() -> [WatchTransferOutboxRecordV1] {
         Array(cachedRecords.values)
+    }
+
+    func retryFailedTransfers() async throws {
+        try await outbox?.retryFailedTransfers()
+        await refreshCachedStateNow()
+        submitClaimedRecordsIfEligible()
     }
 
     private func activatedOrUpdated() {
@@ -293,6 +300,19 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         let snapshot = await outbox.snapshot()
         cachedRecords = snapshot.records
         stateGeneration &+= 1
+        receiptRetryTask?.cancel()
+        receiptRetryTask = nil
+        if let deadline = cachedRecords.values
+            .filter({ $0.status == .waitingForReceipt })
+            .map({ $0.lastUpdatedAt.addingTimeInterval(WatchTransferOutboxStateV1.receiptTimeout) })
+            .min() {
+            receiptRetryTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                } catch { return }
+                self?.submitClaimedRecordsIfEligible()
+            }
+        }
     }
 
     nonisolated private static func transferKey(from metadata: [String: Any]?) -> WatchTransferOutboxKeyV1? {

@@ -102,7 +102,38 @@ targets:
         GENERATE_INFOPLIST_FILE: true
         TEST_TARGET_NAME: FootballPerformance
 
+  FootballPerformanceWatchUITests:
+    type: bundle.ui-testing
+    platform: watchOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Tests/WatchUI
+    dependencies:
+      - target: FootballPerformanceWatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.watchuitests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: FootballPerformanceWatch
+        DEVELOPMENT_TEAM: 4JRB53LG5C
+
 schemes:
+  FootballPerformanceWatchUITests:
+    build:
+      targets:
+        FootballPerformanceWatch: all
+        FootballPerformanceWatchUITests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      debugEnabled: false
+      targets:
+        - name: FootballPerformanceWatchUITests
+          parallelizable: false
+      commandLineArguments:
+        "-AppleLanguages (en)": true
+        "-AppleLocale en_US": true
+
   FootballPerformanceWatch:
     build:
       targets:
@@ -132,5 +163,6 @@ schemes:
     test:
       config: Debug
       targets:
-        - FootballPerformanceE2E
+        - name: FootballPerformanceE2E
+          parallelizable: false
 

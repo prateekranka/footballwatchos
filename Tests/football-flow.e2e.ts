@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/mobile';
 import { expect } from 'e2e';
-import { addManual, fixture, openFresh, tab } from './support/football-ui.ts';
+import { addManual, fixture, latest, openFresh, tab, tapScrollControl } from './support/football-ui.ts';
 
 test('onboarding keeps all guidance reachable and opens each step at its title', async ui => {
   const { app, screen } = ui;
@@ -63,21 +63,28 @@ test('all six football types and durations persist as manual logs', { timeout: 3
   const sessions = [['Football', '1'], ['5-a-side', '15'], ['7-a-side', '45'], ['11-a-side', '60'], ['Training', '90'], ['Calibration', '240']];
   for (const [index, [type, minutes]] of sessions.entries()) {
     await addManual(ui, type, minutes, `manual-${index + 1}-${minutes}min`);
-    await expect(screen.getByText(`${type} · Manual log`, { exact: true }).first()).toBeVisible();
+    await latest(ui, `${type}.*Manual log`);
+    await expect(screen.getByTestId('session-hero').getByText(`${type} · Manual log`, { exact: true })).toBeVisible();
+    await expect(screen.getByTestId('session-hero-duration')).toHaveText(`${minutes} min, Duration`);
+    await app.back();
   }
   await app.restart();
   await tab(screen, 'Settings').tap();
   await expect(screen.getByText('Sessions on this iPhone, 6', { exact: true })).toBeVisible();
   await app.screenshot('settings-six-manual-logs');
   await tab(screen, 'Sessions').tap();
+  await screen.getByRole('scroll-view').first().scrollUntilVisible(screen.getByRole('button', /^Sync status:/), { direction: 'up' });
   await expect(screen.getByText('Manual logs saved on iPhone', { exact: true })).toBeVisible();
-  await screen.scrollUntilVisible(screen.getByRole('button', 'See all', { exact: true }), { direction: 'down' });
-  await screen.getByRole('button', 'See all', { exact: true }).tap();
+  await tapScrollControl(screen, screen.getByRole('scroll-view').first(), screen.getByRole('button', 'See all', { exact: true }));
   await app.screenshot('all-manual-sessions-top');
-  await screen.scrollUntilVisible(screen.getByRole('button', /Football · Manual log/).first(), { direction: 'down' });
+  const football = screen.getByRole('button', /Football · Manual log/);
+  await screen.getByRole('scroll-view').first().scrollUntilVisible(football, { direction: 'down' });
   await app.screenshot('all-manual-sessions-bottom');
-  await expect(screen.getByText('1 min', { exact: true }).first()).toBeVisible();
+  await expect(football.getByText('1 min', { exact: true })).toBeVisible();
   await tab(screen, 'Progress').tap();
-  await expect(screen.getByText('No sessions in this range yet', { exact: true })).toBeVisible();
+  const noCoverage = screen.getByText('Not enough sensor coverage', { exact: true });
+  await screen.getByRole('scroll-view').first().scrollUntilVisible(noCoverage, { direction: 'down', timeout: 60_000 });
+  await expect(noCoverage).toBeVisible();
+  await expect(screen.getByText('Comparisons need whole-session coverage. Sparse HR, distance gaps, and interrupted recordings stay out of trends.', { exact: true })).toBeVisible();
   await app.screenshot('progress-manual-only');
 });

@@ -32,7 +32,11 @@ struct SessionsHomeView: View {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 header
 
-                if let latest {
+                if model.isLibraryLoading {
+                    ProgressView("Loading sessions")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .accessibilityIdentifier("sessions-loading")
+                } else if let latest {
                     WeekHeroCard(snapshot: snapshot)
                     actions
                     if let focusTip {
@@ -75,12 +79,8 @@ struct SessionsHomeView: View {
             AllSessionsView()
         }
         .sheet(isPresented: $showsAddSession) { AddSessionView() }
-        .task {
-            await model.refresh()
-            await model.prepareVisualSummaries(budget: 1)
-        }
         .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active else { return }
+            guard newPhase == .active, model.hasLoadedSessions else { return }
             Task {
                 await model.refresh()
                 await model.prepareVisualSummaries(budget: 1)
@@ -109,7 +109,9 @@ struct SessionsHomeView: View {
                 .font(PerformanceTheme.screenTitle)
                 .foregroundStyle(PerformanceTheme.primaryText)
 
-            Text(model.sessions.isEmpty
+            Text(model.isLibraryLoading
+                 ? "Loading your football history."
+                 : model.sessions.isEmpty
                  ? "Log your football and get better every week."
                  : "Here is how your football is going.")
                 .font(.subheadline)
@@ -221,17 +223,21 @@ struct SessionsHomeView: View {
 /// This week at a glance on the green hero surface: sessions, minutes,
 /// distance, streak, and an eight-week minutes chart.
 struct WeekHeroCard: View {
+    @Environment(\.dynamicTypeSize) private var textSize
     let snapshot: PerformanceCoachV1.TrainingSnapshot
 
     var body: some View {
         let week = snapshot.thisWeek
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
+            let headerLayout = textSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                : AnyLayout(HStackLayout())
+            headerLayout {
                 Text("THIS WEEK")
                     .font(.caption.weight(.bold))
                     .tracking(0.8)
                     .foregroundStyle(.white.opacity(0.8))
-                Spacer()
+                if !textSize.isAccessibilitySize { Spacer() }
                 if snapshot.streakWeeks > 0 {
                     Label(
                         "\(snapshot.streakWeeks)-week streak",
@@ -241,26 +247,33 @@ struct WeekHeroCard: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(.white.opacity(0.18), in: Capsule())
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            AdaptiveMetricGroup {
                 HeroStat(
-                    value: "\(week?.sessionCount ?? 0)",
+                    value: week.map { "\($0.sessionCount)" } ?? "—",
                     caption: (week?.sessionCount ?? 0) == 1 ? "session" : "sessions",
                     emphasised: true
                 )
-                HeroStat(value: "\(Int((week?.minutes ?? 0).rounded()))", caption: "minutes")
+                .accessibilityIdentifier("week-stat-sessions")
+                HeroStat(value: week?.minutes.map { "\(Int($0.rounded()))" } ?? "—", caption: "minutes")
+                    .accessibilityIdentifier("week-stat-minutes")
                 HeroStat(
                     value: SessionRowFormatting.distanceLabel(meters: week?.distanceMeters),
                     caption: "distance"
                 )
+                .accessibilityIdentifier("week-stat-distance")
             }
 
             WeeklyLoadChart(weeks: snapshot.weeks, onHero: true)
                 .frame(height: 96)
+                .accessibilityIdentifier("week-load-chart")
         }
         .heroSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("week-hero")
     }
 }
 

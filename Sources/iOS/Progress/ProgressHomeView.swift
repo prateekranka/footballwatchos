@@ -85,6 +85,7 @@ struct ProgressHomeView: View {
                         caption: "Sessions, 4 weeks",
                         icon: "calendar"
                     )
+                    .accessibilityIdentifier("coach-outings")
                     StatBlock(
                         value: "\(snapshot.streakWeeks)",
                         caption: "Week streak",
@@ -92,7 +93,7 @@ struct ProgressHomeView: View {
                         tint: PerformanceTheme.warning
                     )
                     StatBlock(
-                        value: "\(Int((snapshot.thisWeek?.minutes ?? 0).rounded()))",
+                        value: snapshot.thisWeek?.minutes.map { "\(Int($0.rounded()))" } ?? "—",
                         caption: "Minutes this week",
                         icon: "timer"
                     )
@@ -264,7 +265,7 @@ struct ProgressHomeView: View {
                             .foregroundStyle(.secondary)
                         }
                         if !textSize.isAccessibilitySize { Spacer() }
-                        Text(measure.formatted(measure.value(of: record) ?? 0))
+                        Text(measure.value(of: record).map { measure.formatted($0) } ?? "—")
                             .font(.subheadline.weight(.medium))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
@@ -279,15 +280,23 @@ struct ProgressHomeView: View {
         .performanceCard()
     }
 
+    private var hasSessionsInRange: Bool {
+        model.sessions.contains { record in
+            range.cutoffDate.map { record.startedAt >= $0 } ?? true
+        }
+    }
+
     private var emptyCard: some View {
         VStack(spacing: 10) {
             Image(systemName: "chart.line.uptrend.xyaxis")
                 .font(.title2)
                 .foregroundStyle(.tertiary)
-            Text("No sessions in this range yet")
+            Text(hasSessionsInRange ? "Not enough sensor coverage" : "No sessions in this range yet")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            Text("Record Football Sessions on your watch; trends appear here.")
+            Text(hasSessionsInRange
+                 ? "Comparisons need whole-session coverage. Sparse HR, distance gaps, and interrupted recordings stay out of trends."
+                 : "Record Football Sessions on your watch; trends appear here.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -341,7 +350,7 @@ enum TrendMeasure: String, CaseIterable, Identifiable {
         case .distancePerMinute:
             return BaselineEngineV1.distancePerMinute(record)
         case .averageHeartRate:
-            return record.completion.summary?.averageHeartRate?.value
+            return BaselineEngineV1.averageHeartRate(record)
         }
     }
 

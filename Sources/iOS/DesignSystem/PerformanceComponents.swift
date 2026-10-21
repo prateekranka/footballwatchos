@@ -141,7 +141,7 @@ struct HeroStat: View {
             Text(caption)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -223,34 +223,41 @@ struct CoachTipCard: View {
 
 /// Minutes per week as rounded bars, the current week highlighted.
 struct WeeklyLoadChart: View {
+    @Environment(\.dynamicTypeSize) private var textSize
     let weeks: [PerformanceCoachV1.WeekBucket]
     /// Draw for a hero (white) surface instead of a card.
     var onHero = false
 
     var body: some View {
         Chart(weeks) { week in
-            BarMark(
-                x: .value("Week", week.weekStart, unit: .weekOfYear),
-                y: .value("Minutes", week.minutes),
-                width: .ratio(0.55)
-            )
-            .cornerRadius(4)
-            .foregroundStyle(barColor(week))
+            if let minutes = week.minutes {
+                BarMark(
+                    x: .value("Week", week.weekStart, unit: .weekOfYear),
+                    y: .value("Minutes", minutes),
+                    width: .ratio(0.55)
+                )
+                .cornerRadius(4)
+                .foregroundStyle(barColor(week))
+            }
         }
         .chartXAxis {
             AxisMarks(values: .stride(by: .weekOfYear, count: 2)) {
-                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
-                    .font(.caption2)
-                    .foregroundStyle(onHero ? Color.white.opacity(0.7) : Color.secondary)
+                if !textSize.isAccessibilitySize {
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                        .font(.caption2)
+                        .foregroundStyle(onHero ? Color.white.opacity(0.7) : Color.secondary)
+                }
             }
         }
         .chartYAxis {
             AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) {
                 AxisGridLine()
                     .foregroundStyle(onHero ? Color.white.opacity(0.15) : Color.secondary.opacity(0.15))
-                AxisValueLabel()
-                    .font(.caption2)
-                    .foregroundStyle(onHero ? Color.white.opacity(0.7) : Color.secondary)
+                if !textSize.isAccessibilitySize {
+                    AxisValueLabel()
+                        .font(.caption2)
+                        .foregroundStyle(onHero ? Color.white.opacity(0.7) : Color.secondary)
+                }
             }
         }
         .accessibilityLabel("Minutes played per week")
@@ -266,7 +273,7 @@ struct WeeklyLoadChart: View {
     }
 
     private var accessibilitySummary: String {
-        weeks.map { "\(Int($0.minutes.rounded())) minutes" }.joined(separator: ", ")
+        weeks.map { week in week.minutes.map { "\(Int($0.rounded())) minutes" } ?? "— minutes" }.joined(separator: ", ")
     }
 }
 

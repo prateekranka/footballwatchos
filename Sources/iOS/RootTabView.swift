@@ -45,6 +45,7 @@ struct RootTabView: View {
             await library.applyLaunchQAScenarioIfRequested()
             #endif
             await library.refresh()
+            await library.prepareVisualSummaries(budget: 1)
         }
     }
 }

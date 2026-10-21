@@ -1,13 +1,8 @@
-import XCTest
-
-/// End-to-end coaching journeys against the real app, driven by the
-/// deterministic "coach" QA fixture (`-FP_QA_SCENARIO coach`).
-///
 /// Ways the coaching feature can fail, and the scenario that covers each:
 /// 1. The fixture or real packages do not decode into the library, so the
 ///    screens fall back to the empty state.                 → all journeys
-/// 2. Load is measured wrongly (manual or interrupted sessions dropped from
-///    load, wrong 7- and 28-day windows) or tips rank wrongly, so the
+/// 2. Load includes fragments or drops manual outings, uses wrong calendar
+///    day windows, or tips rank wrongly, so the
 ///    focus tip is not the load spike.                       → coaching journey
 /// 3. Manual or interrupted sessions leak into the personal baseline, so
 ///    the work-rate comparison quotes the wrong percentage.  → coaching journey
@@ -22,6 +17,8 @@ import XCTest
 /// Every journey attaches screenshots to the result bundle; CI exports them.
 /// To reproduce locally, run the FootballPerformanceE2E scheme on any iOS 26
 /// iPhone simulator.
+import XCTest
+
 @MainActor
 final class CoachingE2ETests: XCTestCase {
 
@@ -34,7 +31,7 @@ final class CoachingE2ETests: XCTestCase {
         // 7-day minutes (3 matches + 1 manual log) against the usual week.
         let focus = app.element(containing: "Your load jumped in the last 7 days")
         XCTAssertTrue(focus.waitForExistence(timeout: 30), "Focus tip missing; fixture may not have loaded")
-        XCTAssertTrue(app.element(containing: "330 min in the last 7 days against a usual 55 min a week").exists)
+        XCTAssertTrue(app.element(containing: "330 min in the last 7 days against a usual 45 min a week").exists)
         XCTAssertTrue(app.element(containing: "THIS WEEK").exists)
         capture(app, "01-home-load-spike")
 
@@ -43,7 +40,7 @@ final class CoachingE2ETests: XCTestCase {
         app.buttons["Full plan"].tap()
         XCTAssertTrue(app.element(containing: "From your sessions").waitForExistence(timeout: 10))
         XCTAssertTrue(app.element(containing: "Load spike").exists)
-        XCTAssertTrue(reveal(app.element(containing: "Heart rate ran high for the work done"), in: app))
+        XCTAssertTrue(reveal(app.element(containing: "HR comparison unavailable"), in: app))
         XCTAssertTrue(reveal(app.element(containing: "10% below your baseline of 100 m/min"), in: app))
         capture(app, "02-plan-personal")
         XCTAssertTrue(reveal(app.element(containing: "Foundations"), in: app))

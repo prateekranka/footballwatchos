@@ -149,7 +149,7 @@ struct AdaptiveMetricGroup<Content: View>: View {
     var body: some View {
         let layout = textSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            : AnyLayout(HStackLayout(spacing: 0))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 16))
         layout { content }
     }
 }

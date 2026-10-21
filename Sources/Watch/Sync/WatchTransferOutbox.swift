@@ -69,6 +69,8 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
 /// be verified without a WatchConnectivity runtime.
 struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     static let formatVersion = 1
+    static let receiptTimeout: TimeInterval = 300
+    static let maximumAutomaticAttempts = 4
 
     let formatVersion: Int
     var records: [String: WatchTransferOutboxRecordV1]
@@ -111,8 +113,18 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     }
 
     mutating func claimRecordsForTransfer(now: Date) -> [WatchTransferOutboxRecordV1] {
+        for record in records.values where record.status == .waitingForReceipt
+            && now.timeIntervalSince(record.lastUpdatedAt) >= Self.receiptTimeout {
+            mutate(record.key, now: now) {
+                $0.status = .retryableFailure
+                $0.lastError = "No iPhone import receipt arrived; resend is pending."
+            }
+        }
         let candidates = records.values
-            .filter { $0.status == .pending || $0.status == .retryableFailure }
+            .filter {
+                ($0.status == .pending || $0.status == .retryableFailure)
+                    && $0.attemptCount < Self.maximumAutomaticAttempts
+            }
             .sorted { $0.createdAt < $1.createdAt }
 
         for candidate in candidates {
@@ -131,6 +143,7 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         errorDescription: String?,
         now: Date
     ) {
+        guard records[key.storageKey]?.status != .imported else { return }
         mutate(key, now: now) { record in
             if let errorDescription {
                 record.status = .retryableFailure
@@ -140,6 +153,17 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
                 // Completion means the framework is done with its transfer. It
                 // deliberately does not mean the iPhone has imported data.
                 record.lastError = nil
+            }
+        }
+    }
+
+    mutating func retryFailedTransfers(now: Date) {
+        for record in records.values where record.status == .retryableFailure
+            || record.status == .waitingForReceipt {
+            mutate(record.key, now: now) {
+                $0.status = .pending
+                $0.attemptCount = 0
+                $0.lastError = nil
             }
         }
     }
@@ -277,11 +301,17 @@ actor WatchTransferOutbox {
     /// state is persisted before `transferFile` is called so a crash cannot
     /// cause the same activation to forget that it attempted submission.
     func claimRecordsForTransfer(now: Date = Date()) throws -> [WatchTransferOutboxRecordV1] {
+        let before = state
         let records = state.claimRecordsForTransfer(now: now)
-        if !records.isEmpty {
+        if state != before {
             try persist()
         }
         return records
+    }
+
+    func retryFailedTransfers(now: Date = Date()) throws {
+        state.retryFailedTransfers(now: now)
+        try persist()
     }
 
     func packageURL(for record: WatchTransferOutboxRecordV1) -> URL {

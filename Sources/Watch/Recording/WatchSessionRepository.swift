@@ -179,7 +179,7 @@ public actor WatchSessionRepository {
             throw CocoaError(.fileNoSuchFile)
         }
         let scan = try FootySessionPackageV1.scanStructure(of: originalURL, limits: limits)
-        guard scan.envelope != nil else {
+        guard let envelope = scan.envelope else {
             throw SessionPackageError.missingSessionEnvelope
         }
 
@@ -191,51 +191,49 @@ public actor WatchSessionRepository {
         let recoveredURL = sessionsDirectory
             .appendingPathComponent("\(stem).recovered.\(UUID().uuidString)", isDirectory: false)
             .appendingPathExtension(FootySessionPackageV1.fileExtension)
+        let temporaryURL = recoveredURL.appendingPathExtension("tmp")
+        defer { try? fileManager.removeItem(at: temporaryURL) }
         try FileManager.default.createDirectory(
             at: recoveredURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        guard FileManager.default.createFile(atPath: recoveredURL.path, contents: nil) else {
+        guard fileManager.createFile(atPath: temporaryURL.path, contents: nil) else {
             throw SessionPackageError.destinationAlreadyExists
         }
 
         let completion = SessionCompletionV1(
-            endedAt: recoveredAt,
+            endedAt: scan.lastRecordedAt ?? envelope.startedAt,
             lifecycle: .interrupted(reason: .partialFileRecovery),
             summary: nil,
             healthKitSaveOutcome: .unavailable(reason: .notAttempted)
         )
-        var copiedFrameCount = 0
+        let copiedFrameCount: Int
+        let destination = try FileHandle(forWritingTo: temporaryURL)
         do {
-            let destination = try FileHandle(forWritingTo: recoveredURL)
-            do {
-                try FootySessionPackageV1.writeHeader(to: destination)
-                copiedFrameCount = try FootySessionPackageV1.streamVerifiedFrames(
-                    from: originalURL,
-                    to: destination,
-                    limits: limits
-                )
-                _ = try FootySessionPackageV1.append(
-                    frame: FootySessionFrameV1(payload: .completion(completion)),
-                    to: destination,
-                    limits: limits
-                )
-                try destination.synchronize()
-                try destination.close()
-            } catch {
-                try? destination.close()
-                throw error
-            }
+            try FootySessionPackageV1.writeHeader(to: destination)
+            copiedFrameCount = try FootySessionPackageV1.streamVerifiedFrames(
+                from: originalURL,
+                to: destination,
+                limits: limits
+            )
+            _ = try FootySessionPackageV1.append(
+                frame: FootySessionFrameV1(payload: .completion(completion)),
+                to: destination,
+                limits: limits
+            )
+            try destination.synchronize()
+            try destination.close()
         } catch {
-            // Do not leave a half-written recovery package in discovery.
-            try? fileManager.removeItem(at: recoveredURL)
+            try? destination.close()
             throw error
         }
         guard copiedFrameCount > 0 else {
             // Scan verified an envelope, so this is unreachable; fail closed.
-            try? fileManager.removeItem(at: recoveredURL)
             throw SessionPackageError.missingSessionEnvelope
         }
+        let recoveredScan = try FootySessionPackageV1.scanStructure(of: temporaryURL, limits: limits)
+        guard recoveredScan.status == .complete else { throw SessionPackageError.missingSessionEnvelope }
+        try fileManager.moveItem(at: temporaryURL, to: recoveredURL)
 
         try? (recoveredURL as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
 
@@ -249,10 +247,29 @@ public actor WatchSessionRepository {
             originalFilename: filename,
             recoveredFilename: recoveredURL.lastPathComponent,
             sourceStatus: scan.status,
-            recoveredDigest: try FootySessionPackageV1.digest(of: recoveredURL),
+            recoveredDigest: recoveredScan.wholeFileDigest,
             startedAt: startedAt,
             recordedDuration: recordedDuration
         )
+    }
+
+    func validatedRecoveredFilename(
+        forPartialNamed filename: String,
+        discovered: [StoredSessionPackageV1]
+    ) throws -> String? {
+        let source = try FootySessionPackageV1.scanStructure(of: partialURL(named: filename), limits: limits)
+        guard let sessionID = source.envelope?.sessionID else { return nil }
+        let stem = (filename as NSString).deletingPathExtension
+        for package in discovered where package.kind == .sealed
+            && package.filename.hasPrefix("\(stem).recovered.") {
+            let url = sessionsDirectory.appendingPathComponent(package.filename)
+            guard let scan = try? FootySessionPackageV1.scanStructure(of: url, limits: limits),
+                  scan.status == .complete,
+                  scan.envelope?.sessionID == sessionID,
+                  scan.completion?.lifecycle == .interrupted(reason: .partialFileRecovery) else { continue }
+            return package.filename
+        }
+        return nil
     }
 
     /// Read-only display metadata for any package file in the sessions

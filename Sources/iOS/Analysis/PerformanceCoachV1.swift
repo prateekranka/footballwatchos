@@ -14,7 +14,7 @@ enum PerformanceCoachV1 {
     struct WeekBucket: Identifiable, Equatable, Sendable {
         let weekStart: Date
         let sessionCount: Int
-        let minutes: Double
+        let minutes: Double?
         /// `nil` when no session that week recorded distance.
         let distanceMeters: Double?
 
@@ -29,7 +29,7 @@ enum PerformanceCoachV1 {
         /// does not break a streak until it is over.
         let streakWeeks: Int
         /// Minutes played in the last seven days.
-        let acuteMinutes: Double
+        let acuteMinutes: Double?
         /// Average weekly minutes over the 28 days before the last seven.
         /// `nil` when that window holds no sessions.
         let chronicWeeklyMinutes: Double?
@@ -38,7 +38,7 @@ enum PerformanceCoachV1 {
 
         /// Acute:chronic load ratio. Around 0.8–1.3 is a steady build.
         var loadRatio: Double? {
-            guard let chronicWeeklyMinutes, chronicWeeklyMinutes > 0 else { return nil }
+            guard let acuteMinutes, let chronicWeeklyMinutes, chronicWeeklyMinutes >= 30 else { return nil }
             return acuteMinutes / chronicWeeklyMinutes
         }
     }
@@ -111,13 +111,8 @@ enum PerformanceCoachV1 {
 
     // MARK: - Session basics
 
-    /// Minutes for one session: the recorded or entered duration, otherwise
-    /// the span between start and end.
-    static func minutes(_ record: FileSessionRepository.SessionRecord) -> Double {
-        if let seconds = record.completion.summary?.duration?.value, seconds.isFinite, seconds > 0 {
-            return seconds / 60
-        }
-        return max(0, record.completion.endedAt.timeIntervalSince(record.startedAt) / 60)
+    static func minutes(_ record: FileSessionRepository.SessionRecord) -> Double? {
+        record.recordedDurationSeconds.map { $0 / 60 }
     }
 
     // MARK: - Load and consistency
@@ -135,19 +130,20 @@ enum PerformanceCoachV1 {
         }
 
         var grouped: [Date: [FileSessionRepository.SessionRecord]] = [:]
-        for record in records where record.startedAt <= now {
+        for record in records where record.startedAt <= now && record.completion.lifecycle == .completed {
             guard let start = calendar.dateInterval(of: .weekOfYear, for: record.startedAt)?.start else { continue }
             grouped[start, default: []].append(record)
         }
 
         let weeks = weekStarts.map { start -> WeekBucket in
             let inWeek = grouped[start] ?? []
+            let durations = inWeek.compactMap { minutes($0) }
             let distances = inWeek.compactMap { $0.completion.summary?.distance?.value }
             return WeekBucket(
                 weekStart: start,
                 sessionCount: inWeek.count,
-                minutes: inWeek.reduce(0) { $0 + minutes($1) },
-                distanceMeters: distances.isEmpty ? nil : distances.reduce(0, +)
+                minutes: durations.count == inWeek.count ? durations.reduce(0, +) : nil,
+                distanceMeters: distances.isEmpty || distances.count != inWeek.count ? nil : distances.reduce(0, +)
             )
         }
 
@@ -164,32 +160,37 @@ enum PerformanceCoachV1 {
             cursor = previous
         }
 
-        let day: TimeInterval = 86_400
-        let acuteStart = now.addingTimeInterval(-7 * day)
-        let chronicStart = now.addingTimeInterval(-35 * day)
-        let last28Start = now.addingTimeInterval(-28 * day)
+        let today = calendar.startOfDay(for: now)
+        let acuteStart = calendar.date(byAdding: .day, value: -6, to: today)!
+        let chronicStart = calendar.date(byAdding: .day, value: -34, to: today)!
+        let last28Start = calendar.date(byAdding: .day, value: -27, to: today)!
 
         var acute = 0.0
         var chronic = 0.0
-        var chronicSessions = 0
+        var chronicWeeks = Set<Int>()
+        var acuteComplete = true
+        var chronicComplete = true
         var last28 = 0
-        for record in records where record.startedAt <= now {
+        for record in records where record.startedAt <= now && record.completion.lifecycle == .completed {
+            if record.startedAt >= last28Start { last28 += 1 }
             let played = minutes(record)
-            if record.startedAt > acuteStart {
-                acute += played
-            } else if record.startedAt > chronicStart {
+            if record.startedAt >= acuteStart {
+                if let played { acute += played } else { acuteComplete = false }
+            } else if record.startedAt >= chronicStart {
+                guard let played else { chronicComplete = false; continue }
                 chronic += played
-                chronicSessions += 1
+                guard played >= 10 else { continue }
+                let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: record.startedAt), to: acuteStart).day ?? 0
+                chronicWeeks.insert((days - 1) / 7)
             }
-            if record.startedAt > last28Start { last28 += 1 }
         }
 
         return TrainingSnapshot(
             weeks: weeks,
             sessionsLast28Days: last28,
             streakWeeks: streak,
-            acuteMinutes: acute,
-            chronicWeeklyMinutes: chronicSessions > 0 ? chronic / 4 : nil
+            acuteMinutes: acuteComplete ? acute : nil,
+            chronicWeeklyMinutes: chronicComplete && chronicWeeks.count >= 3 && chronic / 4 >= 30 ? chronic / 4 : nil
         )
     }
 
@@ -197,6 +198,18 @@ enum PerformanceCoachV1 {
 
     /// Ranked tips from the whole history. `records` are newest first, as
     /// the library publishes them.
+    static func comparisonNotes(records: [FileSessionRepository.SessionRecord]) -> [String] {
+        guard let latest = records.first(where: BaselineEngineV1.isValidSession) else { return [] }
+        var notes: [String] = []
+        if BaselineEngineV1.distancePerMinute(latest) == nil {
+            notes.append("Work-rate comparison unavailable — distance coverage is limited or may be undercounted.")
+        }
+        if BaselineEngineV1.averageHeartRate(latest) == nil {
+            notes.append("HR comparison unavailable — regular samples and at least 70% whole-session coverage are needed.")
+        }
+        return notes
+    }
+
     static func tips(
         records: [FileSessionRepository.SessionRecord],
         snapshot: TrainingSnapshot,
@@ -233,14 +246,14 @@ enum PerformanceCoachV1 {
         }
 
         // Load spikes and drops.
-        if let ratio = snapshot.loadRatio, let chronic = snapshot.chronicWeeklyMinutes {
+        if let ratio = snapshot.loadRatio, let chronic = snapshot.chronicWeeklyMinutes, let acute = snapshot.acuteMinutes {
             if ratio > 1.5 {
                 tips.append(Tip(
                     id: "load-spike",
                     focus: .load,
                     tone: .caution,
                     title: "Your load jumped in the last 7 days",
-                    evidence: "\(Int(snapshot.acuteMinutes.rounded())) min in the last 7 days against a usual \(Int(chronic.rounded())) min a week. Sudden spikes are when muscle injuries tend to happen.",
+                    evidence: "\(Int(acute.rounded())) min in the last 7 days against a usual \(Int(chronic.rounded())) min a week. Sudden spikes are when muscle injuries tend to happen.",
                     drill: Drill(
                         name: "Protect the next 48 hours",
                         prescription: "Keep the next session light, or swap it for 20 min mobility and an easy bike. Aim for 8+ hours of sleep."
@@ -253,7 +266,7 @@ enum PerformanceCoachV1 {
                     focus: .load,
                     tone: .improve,
                     title: "Ease back in after a quiet week",
-                    evidence: "\(Int(snapshot.acuteMinutes.rounded())) min in the last 7 days against a usual \(Int(chronic.rounded())) min a week.",
+                    evidence: "\(Int(acute.rounded())) min in the last 7 days against a usual \(Int(chronic.rounded())) min a week.",
                     drill: Drill(
                         name: "Rebuild gradually",
                         prescription: "Return at about 70% of your usual minutes this week, then add roughly 10% a week."
@@ -277,10 +290,10 @@ enum PerformanceCoachV1 {
                 currentStartedAt: latest.startedAt
             )
             let workRate = BaselineEngineV1.distancePerMinute(latest)
-            let heartRate = latest.completion.summary?.averageHeartRate?.value
+            let heartRate = BaselineEngineV1.averageHeartRate(latest)
 
             var workRateDelta: Double?
-            if case .established(let base, _) = distanceBaseline, base > 0, let workRate {
+            if case .established(let base, _) = distanceBaseline, base >= 40, let workRate {
                 workRateDelta = (workRate - base) / base
                 let percent = Int((abs(workRateDelta ?? 0) * 100).rounded())
                 if let delta = workRateDelta, delta < -0.08 {
@@ -417,6 +430,7 @@ enum PerformanceCoachV1 {
         let highIntensityEffortCount: Int?
         let medianRecoveryBetweenEffortsS: Double?
         let sprintCount: Int
+        let evidenceNotes: [String]
         var takeaways: [Tip] = []
 
         var zoneSeconds: Double { zones.reduce(0) { $0 + $1.seconds } }
@@ -431,40 +445,63 @@ enum PerformanceCoachV1 {
         /// Positive when the second half was slower than the first.
         var workRateFade: Double? {
             guard let first = firstHalfDistancePerMinute, let second = secondHalfDistancePerMinute,
-                  first > 0 else { return nil }
+                  first >= 40 else { return nil }
             return (first - second) / first
         }
     }
 
-    /// Max heart rate from age (Tanaka: 208 − 0.7 × age) when known, else the
-    /// higher of the highest recorded reading and a conservative 190 bpm.
     static func heartRateMax(age: Int?, observedPeak: Double?) -> Double {
         if let age, (10...90).contains(age) {
             return 208 - 0.7 * Double(age)
         }
-        return max(observedPeak ?? 0, 190)
+        return 190
     }
 
     static func insights(
         for detail: FileSessionRepository.SessionDetail,
         age: Int?
     ) -> SessionInsights {
-        let heartRate = detail.heartRateSnapshots
-            .map { (timestamp: $0.timestamp, bpm: $0.value) }
-            .filter { $0.bpm > 0 }
-            .sorted { $0.timestamp < $1.timestamp }
+        let record = detail.record
+        let heartSamples = detail.heartRateSnapshots.map { (timestamp: $0.timestamp, value: $0.value) }
+        let distanceSamples = detail.distanceSnapshots.map { (timestamp: $0.timestamp, value: $0.value) }
+        let lastRecordedAt = record.evidence?.durationSeconds.map { record.startedAt.addingTimeInterval($0) }
+            ?? (detail.heartRateSnapshots + detail.distanceSnapshots).map(\.timestamp).max()
+        let evidence = SessionEvidenceV1.evaluate(
+            envelope: record.sessionEnvelope, completion: record.completion, lastRecordedAt: lastRecordedAt,
+            heartRate: heartSamples, distance: distanceSamples
+        )
+        let heartRate = SessionEvidenceV1.acceptedHeartRate(
+            heartSamples, start: record.startedAt, duration: evidence.durationSeconds ?? 0
+        ).map { (timestamp: $0.timestamp, bpm: $0.value) }
         let peak = heartRate.map(\.bpm).max()
         let maxHeartRate = heartRateMax(age: age, observedPeak: peak)
-
-        let zones = zoneShares(heartRate: heartRate, heartRateMax: maxHeartRate)
-        let halves = halfDistancePerMinute(detail)
+        let zones = evidence.hasWholeSessionHeartRate
+            ? zoneShares(heartRate: heartRate, heartRateMax: maxHeartRate) : []
+        let halves = record.completion.lifecycle == .completed ? halfDistancePerMinute(detail) : nil
 
         var effortCount: Int?
-        var medianRecovery: Double?
-        if heartRate.count >= 2 {
+        var effortInterval: Double?
+        if evidence.hasEffortCoverage {
             let workRest = SessionAnalystV1.workRest(heartRate: heartRate, high: 0.85 * maxHeartRate)
             effortCount = workRest.highIntensityEffortCount
-            medianRecovery = workRest.medianRecoveryBetweenEffortsS
+            effortInterval = workRest.medianRecoveryBetweenEffortsS
+        }
+        var notes: [String] = []
+        if record.completion.lifecycle != .completed {
+            notes.append("Interrupted recording — only recorded time is shown. This fragment does not count as an outing or support coaching comparisons.")
+        } else {
+            if !evidence.hasWholeSessionHeartRate {
+                notes.append("HR coverage is too sparse or starts too late. Zones need at least 50% of the session clock and 60 accepted samples.")
+            }
+            if evidence.averageHeartRate == nil {
+                notes.append("HR comparison unavailable — needs at least 70% coverage and regular samples. Readings above 200 bpm are excluded from coaching.")
+            }
+            if !evidence.hasEffortCoverage {
+                notes.append("Hard efforts unavailable — needs regular HR samples, at least 80% coverage, and gaps capped at 20 seconds.")
+            }
+            if halves == nil {
+                notes.append("Distance coverage is too limited for work-rate or fade advice. Both halves need coverage without gaps over 2 minutes; very low recorded distance may be undercounted.")
+            }
         }
 
         var insights = SessionInsights(
@@ -474,15 +511,14 @@ enum PerformanceCoachV1 {
             firstHalfDistancePerMinute: halves?.first,
             secondHalfDistancePerMinute: halves?.second,
             highIntensityEffortCount: effortCount,
-            medianRecoveryBetweenEffortsS: medianRecovery,
-            sprintCount: detail.sprintEvents.count
+            medianRecoveryBetweenEffortsS: effortInterval,
+            sprintCount: detail.sprintEvents.count,
+            evidenceNotes: notes
         )
         insights.takeaways = takeaways(for: insights)
         return insights
     }
 
-    /// Time-weighted seconds per zone. Gaps over two minutes are missing
-    /// evidence and count toward no zone.
     static func zoneShares(
         heartRate: [(timestamp: Date, bpm: Double)],
         heartRateMax: Double
@@ -491,7 +527,7 @@ enum PerformanceCoachV1 {
         if heartRateMax > 0 {
             for index in heartRate.indices.dropFirst() {
                 let interval = heartRate[index].timestamp.timeIntervalSince(heartRate[index - 1].timestamp)
-                guard interval > 0, interval <= 120 else { continue }
+                guard interval > 0, interval <= 90 else { continue }
                 let fraction = heartRate[index - 1].bpm / heartRateMax
                 let zone: Int
                 switch fraction {
@@ -507,27 +543,26 @@ enum PerformanceCoachV1 {
         return seconds.enumerated().map { ZoneShare(zone: $0.offset + 1, seconds: $0.element) }
     }
 
-    /// Distance per minute in each half of the recorded distance span, from
-    /// cumulative distance snapshots. `nil` when either half is under five
-    /// minutes or has too few readings to compare.
     static func halfDistancePerMinute(
         _ detail: FileSessionRepository.SessionDetail
     ) -> (first: Double, second: Double)? {
-        let points = detail.distanceSnapshots
-            .filter { $0.timestamp >= detail.record.startedAt }
-            .sorted { $0.timestamp < $1.timestamp }
-        guard points.count >= 4, let firstPoint = points.first, let lastPoint = points.last else { return nil }
-        let span = lastPoint.timestamp.timeIntervalSince(firstPoint.timestamp)
-        guard span >= 600 else { return nil }
-        let midpoint = firstPoint.timestamp.addingTimeInterval(span / 2)
-        guard let middle = points.last(where: { $0.timestamp <= midpoint }) else { return nil }
-
-        let firstMinutes = middle.timestamp.timeIntervalSince(firstPoint.timestamp) / 60
-        let secondMinutes = lastPoint.timestamp.timeIntervalSince(middle.timestamp) / 60
-        guard firstMinutes >= 5, secondMinutes >= 5 else { return nil }
-        let firstMeters = max(0, middle.value - firstPoint.value)
-        let secondMeters = max(0, lastPoint.value - middle.value)
-        return (firstMeters / firstMinutes, secondMeters / secondMinutes)
+        let start = detail.record.startedAt
+        guard let duration = detail.record.evidence?.durationSeconds,
+              detail.record.completion.lifecycle == .completed,
+              let points = SessionEvidenceV1.distancePoints(
+                detail.distanceSnapshots.map { ($0.timestamp, $0.value) }, start: start, duration: duration
+              ), let first = points.first, let last = points.last else { return nil }
+        let midpoint = start.addingTimeInterval(duration / 2)
+        guard let before = points.last(where: { $0.timestamp <= midpoint }),
+              let after = points.first(where: { $0.timestamp >= midpoint }) else { return nil }
+        let interval = after.timestamp.timeIntervalSince(before.timestamp)
+        let fraction = interval > 0 ? midpoint.timeIntervalSince(before.timestamp) / interval : 0
+        let middleMeters = before.value + (after.value - before.value) * fraction
+        let halfMinutes = duration / 120
+        let firstRate = (middleMeters - first.value) / halfMinutes
+        let secondRate = (last.value - middleMeters) / halfMinutes
+        guard firstRate >= 40, secondRate >= 40 else { return nil }
+        return (firstRate, secondRate)
     }
 
     static func takeaways(for insights: SessionInsights) -> [Tip] {
@@ -571,7 +606,7 @@ enum PerformanceCoachV1 {
                     focus: .intensity,
                     tone: .improve,
                     title: "Push harder in short bursts",
-                    evidence: "Only \(percent)% of the session was above 80% of your max heart rate. Football rewards repeated high-intensity actions.",
+                    evidence: "Only \(percent)% of recorded HR time was above 80% of your max heart rate. Football rewards repeated high-intensity actions.",
                     drill: Drill(
                         name: "15-45 sprints",
                         prescription: "Twice a week: 2 sets of 8 × 15 s fast running, 45 s jog between, 3 min rest between sets."
@@ -584,7 +619,7 @@ enum PerformanceCoachV1 {
                     focus: .endurance,
                     tone: .caution,
                     title: "A lot of time in the red",
-                    evidence: "\(percent)% of the session was above 80% of your max heart rate. A bigger aerobic base lets you recover between efforts.",
+                    evidence: "\(percent)% of recorded HR time was above 80% of your max heart rate. A bigger aerobic base lets you recover between efforts.",
                     drill: Drill(
                         name: "Zone 2 base run",
                         prescription: "Once a week: 30–40 min at an easy, conversational pace (about 60–70% of max heart rate)."
@@ -592,22 +627,6 @@ enum PerformanceCoachV1 {
                     priority: 15
                 ))
             }
-        }
-
-        if let recovery = insights.medianRecoveryBetweenEffortsS,
-           let efforts = insights.highIntensityEffortCount, efforts >= 3, recovery > 90 {
-            tips.append(Tip(
-                id: "session-slow-recovery",
-                focus: .recovery,
-                tone: .improve,
-                title: "Recover faster between efforts",
-                evidence: "\(efforts) hard efforts, with a typical \(Int(recovery.rounded())) s before the next one.",
-                drill: Drill(
-                    name: "Short-rest repeats",
-                    prescription: "3 sets of 6 × 30 m sprints with only 25 s recovery between reps and 3 min between sets."
-                ),
-                priority: 25
-            ))
         }
 
         return Array(tips.sorted { $0.priority < $1.priority }.prefix(3))

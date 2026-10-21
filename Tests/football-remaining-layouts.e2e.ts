@@ -1,49 +1,72 @@
 import { test } from '@e2e-dev/mobile';
 import { expect } from 'e2e';
-import { fixture, layout, openFresh, tab, type FootballUI } from './support/football-ui.ts';
+import { fixture, layout, openAddSession, openFresh, tab, tapScrollControl, type FootballUI } from './support/football-ui.ts';
 
-async function prepareLarge(ui: FootballUI) {
+async function prepareLarge(ui: FootballUI, data: 'Demo data' | 'Degraded evidence' = 'Demo data') {
   await openFresh(ui);
   await ui.device.setAppearance('light');
-  await fixture(ui, 'Demo data');
+  await fixture(ui, data);
   await layout(ui, '200% text at 320 pt');
   await tab(ui.screen, 'Sessions').tap();
 }
 
 test('large text keeps Progress and sync usable', { timeout: 180_000 }, async ui => {
   const { app, screen } = ui;
-  await prepareLarge(ui);
+  await prepareLarge(ui, 'Degraded evidence');
   await tab(screen, 'Progress').tap();
+  const content = screen.getByRole('scroll-view').first();
+  const distance = screen.getByRole('tablist').getByText('Distance', { exact: true });
+  const heart = screen.getByRole('tablist').getByText('Heart rate', { exact: true });
+  const allTime = screen.getByRole('tablist').getByText('All time', { exact: true });
+  await content.scrollUntilVisible(distance, { direction: 'down', timeout: 60_000 });
+  await expect(distance).toBeSelected();
+  await content.scrollUntilVisible(screen.getByText('Distance per minute', { exact: true }), { direction: 'down' });
+  await expect(screen.getByText('Distance per minute', { exact: true })).toBeVisible();
   await app.screenshot('large-progress-distance');
-  await screen.getByRole('tab', 'Heart rate', { exact: true }).tap();
+  await content.scrollUntilVisible(heart, { direction: 'up' });
+  await heart.tap();
+  await expect(heart).toBeSelected();
+  await content.scrollUntilVisible(allTime, { direction: 'down' });
+  await allTime.tap();
+  await expect(allTime).toBeSelected();
+  await content.scrollUntilVisible(screen.getByText('Average heart rate', { exact: true }), { direction: 'down' });
   await expect(screen.getByText('Average heart rate', { exact: true })).toBeVisible();
-  await screen.getByRole('tab', 'All time', { exact: true }).tap();
   await app.screenshot('large-progress-heart-all-time');
   await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
   await app.screenshot('large-progress-lower');
   await tab(screen, 'Sessions').tap();
-  await screen.getByRole('button', /^Sync status:/).tap();
+  // A tap while the list still glides only stops the scroll, so wait for the row to settle.
+  await tapScrollControl(screen, screen.getByRole('scroll-view').first(), screen.getByRole('button', /^Sync status:/));
+  await expect(screen.getByRole('button', 'Done', { exact: true })).toBeVisible();
   await app.screenshot('large-sync-top');
   await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
   await app.screenshot('large-sync-lower');
   await screen.getByRole('button', 'Done', { exact: true }).tap();
   await layout(ui, 'Standard');
   await tab(screen, 'Progress').tap();
-  await screen.scrollUntilVisible(screen.getByRole('tab', 'Heart rate', { exact: true }), { direction: 'up' });
-  await screen.getByRole('tab', 'Heart rate', { exact: true }).tap();
-  await screen.getByRole('tab', 'All time', { exact: true }).tap();
+  await content.scrollUntilVisible(heart, { direction: 'up', timeout: 60_000 });
+  await heart.tap();
+  await expect(heart).toBeSelected();
+  await content.scrollUntilVisible(allTime, { direction: 'down' });
+  await allTime.tap();
+  await expect(allTime).toBeSelected();
+  await content.scrollUntilVisible(screen.getByText('Average heart rate', { exact: true }), { direction: 'down' });
+  await expect(screen.getByText('Average heart rate', { exact: true })).toBeVisible();
   await app.screenshot('progress-heart-all-time');
   await layout(ui, 'Animations off');
   await tab(screen, 'Progress').tap();
-  await screen.scrollUntilVisible(screen.getByRole('tab', 'Distance', { exact: true }), { direction: 'up' });
-  await screen.getByRole('tab', 'Distance', { exact: true }).tap();
+  await content.scrollUntilVisible(distance, { direction: 'up', timeout: 60_000 });
+  await distance.tap();
+  await expect(distance).toBeSelected();
+  await content.scrollUntilVisible(screen.getByText('Distance per minute', { exact: true }), { direction: 'down' });
+  await expect(screen.getByText('Distance per minute', { exact: true })).toBeVisible();
   await app.screenshot('progress-animations-off');
 });
 
 test('large text permits duration entry and persists the manual log', { timeout: 180_000 }, async ui => {
   const { app, screen } = ui;
   await prepareLarge(ui);
-  await screen.getByTestId('add-session').tap();
+  await openAddSession(ui);
   await app.screenshot('large-session-form-top');
   const duration = screen.getByTestId('session-duration');
   await screen.scrollUntilVisible(duration, { direction: 'down' });
@@ -62,11 +85,12 @@ test('large text permits duration entry and persists the manual log', { timeout:
   await screen.getByTestId('session-duration').fill('90');
   await expect(screen.getByTestId('session-duration')).toHaveValue('90');
   await app.screenshot('large-session-form-keyboard');
-  await ui.device.dismissKeyboard();
+  await screen.getByRole('button', 'Done', { exact: true }).tap();
   await screen.getByRole('collection-view').swipe({ direction: 'down' });
   await app.screenshot('large-session-form-lower');
   await screen.getByTestId('save-session').tap();
-  await expect(screen.getByTestId('add-session')).toBeVisible();
+  await expect(screen.getByTestId('save-session')).toBeHidden();
+  await expect(tab(screen, 'Sessions')).toBeVisible();
   await app.restart();
   await tab(screen, 'Settings').tap();
   await expect(screen.getByText('Sessions on this iPhone, 5', { exact: true })).toBeVisible();
@@ -79,8 +103,7 @@ test('large text keeps all three onboarding pages and actions usable', { timeout
   await tab(screen, 'Settings').tap();
   await screen.getByRole('collection-view').swipe({ direction: 'down' });
   const review = screen.getByRole('button', 'Review onboarding', { exact: true });
-  await screen.scrollUntilVisible(review, { direction: 'down' });
-  await review.tap();
+  await tapScrollControl(screen, screen.getByRole('collection-view'), review);
   for (let page = 1; page <= 3; page++) {
     await expect(screen.getByTestId('onboarding-title')).toBeVisible();
     await app.screenshot(`large-onboarding-${page}-top`);

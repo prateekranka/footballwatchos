@@ -211,23 +211,41 @@ struct SessionHeroHeader: View {
                 Spacer(minLength: 0)
             }
 
+            if case let .interrupted(reason) = record.completion.lifecycle {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Interrupted", systemImage: "exclamationmark.triangle.fill")
+                        .font(.headline)
+                        .foregroundStyle(PerformanceTheme.highlight)
+                    Text(SessionRowFormatting.interruptionDetail(reason))
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("session-hero-interrupted")
+            }
+
             AdaptiveMetricGroup {
                 HeroStat(
                     value: SessionRowFormatting.durationLabel(SessionRowFormatting.summaryDuration(record)),
                     caption: "Duration",
                     emphasised: true
                 )
+                .accessibilityIdentifier("session-hero-duration")
                 HeroStat(
                     value: SessionRowFormatting.distanceLabel(meters: SessionRowFormatting.summaryDistance(record)),
                     caption: "Distance"
                 )
+                .accessibilityIdentifier("session-hero-distance")
                 HeroStat(
                     value: SessionRowFormatting.heartRateLabel(SessionRowFormatting.summaryAverageHeartRate(record)),
                     caption: "Avg heart rate"
                 )
+                .accessibilityIdentifier("session-hero-heart")
             }
         }
         .heroSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session-hero")
     }
 }
 
@@ -249,7 +267,15 @@ struct SessionInsightsSection: View {
                     )
                     ZoneBreakdownView(zones: insights.zones, heartRateMax: insights.heartRateMax)
                         .performanceCard()
+                        .accessibilityIdentifier("coach-zones")
                 }
+            }
+
+            ForEach(insights.evidenceNotes, id: \.self) { note in
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .performanceCard()
             }
 
             if !tiles.isEmpty {
@@ -258,6 +284,7 @@ struct SessionInsightsSection: View {
                     LazyVGrid(columns: columns, spacing: 10) {
                         ForEach(tiles, id: \.caption) { tile in
                             MetricTile(icon: tile.icon, tint: tile.tint, value: tile.value, caption: tile.caption)
+                                .accessibilityIdentifier("coach-" + tile.caption)
                         }
                     }
                 }
@@ -286,25 +313,21 @@ struct SessionInsightsSection: View {
                 icon: "flame.fill",
                 tint: PerformanceTheme.heartRate,
                 value: "\(Int((share * 100).rounded()))%",
-                caption: "Time above 80% max HR"
+                caption: "Recorded HR time above 80% max"
             ))
         }
-        if let efforts = insights.highIntensityEffortCount {
-            result.append(Tile(
-                icon: "bolt.heart.fill",
-                tint: PerformanceTheme.warning,
-                value: "\(efforts)",
-                caption: "Hard efforts"
-            ))
-        }
-        if let recovery = insights.medianRecoveryBetweenEffortsS {
-            result.append(Tile(
-                icon: "arrow.clockwise.heart",
-                tint: PerformanceTheme.movement,
-                value: "\(Int(recovery.rounded())) s",
-                caption: "Typical recovery between efforts"
-            ))
-        }
+        result.append(Tile(
+            icon: "bolt.heart.fill",
+            tint: PerformanceTheme.warning,
+            value: insights.highIntensityEffortCount.map(String.init) ?? "—",
+            caption: "Hard efforts"
+        ))
+        result.append(Tile(
+            icon: "arrow.clockwise.heart",
+            tint: PerformanceTheme.movement,
+            value: insights.medianRecoveryBetweenEffortsS.map { "\(Int($0.rounded())) s" } ?? "—",
+            caption: "Time between hard efforts"
+        ))
         if let first = insights.firstHalfDistancePerMinute, let second = insights.secondHalfDistancePerMinute {
             result.append(Tile(
                 icon: "figure.run",
@@ -479,14 +502,13 @@ struct UnfoldedHeroCard: View {
     private var heartRateSegments: [ChartPreparationV1.Segment] {
         ChartPreparationV1.segments(
             from: detail.heartRateSnapshots.map { ($0.timestamp, $0.value) },
-            maximumGapSeconds: 120
+            maximumGapSeconds: 120,
+            relativeTo: startedAt
         )
     }
 
     private var sessionMinutes: Double {
-        let end = detail.record.completion.endedAt.timeIntervalSince(startedAt) / 60
-        let lastHeartRate = detail.heartRateSnapshots.last?.timestamp.timeIntervalSince(startedAt) ?? 0
-        return max(1, end, lastHeartRate / 60)
+        max(1, (SessionRowFormatting.summaryDuration(detail.record) ?? 0) / 60)
     }
 
     /// Per-minute distance deltas from the cumulative recorded distance.
@@ -500,6 +522,8 @@ struct UnfoldedHeroCard: View {
         var currentMinute = Int(points[0].timestamp.timeIntervalSince(startedAt) / 60)
         var currentMeters = 0.0
         for index in points.indices.dropFirst() {
+            let interval = points[index].timestamp.timeIntervalSince(points[index - 1].timestamp)
+            guard interval > 0, interval <= 120 else { continue }
             let delta = points[index].value - points[index - 1].value
             let minute = Int(points[index].timestamp.timeIntervalSince(startedAt) / 60)
             if delta > 0 {

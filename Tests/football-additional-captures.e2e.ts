@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/mobile';
 import { expect } from 'e2e';
-import { explore, fixture, latest, layout, openFresh, tab, type FootballUI } from './support/football-ui.ts';
+import { dismissPopover, explore, fixture, latest, layout, openFresh, tab, type FootballUI } from './support/football-ui.ts';
 
 async function appearance(ui: FootballUI, value: 'System' | 'Light' | 'Dark') {
   await tab(ui.screen, 'Settings').tap();
@@ -17,13 +17,11 @@ test('future end time is rejected through the native calendar', async ui => {
   await screen.getByTestId('add-session').tap();
   await expect(screen.getByTestId('session-duration')).toHaveValue('45');
   await screen.getByTestId('session-start').getByRole('button', /^\d+ \w+ \d{4}$/).tap();
-  const today = screen.getByRole('button', /^Today,/);
+  const today = screen.getByText(/^Today,/);
   await today.tap();
   await expect(today).toBeSelected();
   await app.screenshot('calendar-today-selected');
-  // The native dismissal region spans the calendar too. Its center falls
-  // inside the calendar. The clear left margin dismisses the popover.
-  await screen.tapAt({ x: 20, y: 180 });
+  await dismissPopover(screen, today);
   await expect(screen.getByTestId('DatePicker.Show')).toBeHidden();
   await screen.getByTestId('save-session').tap();
   await expect(screen.getByTestId('session-validation').first()).toContainText('Choose a start time that puts the end of the session in the past.');

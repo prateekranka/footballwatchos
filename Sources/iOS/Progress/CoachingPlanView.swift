@@ -18,6 +18,13 @@ struct CoachingPlanView: View {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 LoadStatusCard(snapshot: snapshot)
 
+                ForEach(PerformanceCoachV1.comparisonNotes(records: model.sessions), id: \.self) { note in
+                    Text(note)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .performanceCard()
+                }
+
                 let personal = tips.filter { !$0.isGeneral }
                 let general = tips.filter(\.isGeneral)
 
@@ -73,9 +80,9 @@ struct LoadStatusCard: View {
 
         var detail: String {
             switch self {
-            case .unknown: return "After a few weeks of sessions, this compares your last 7 days with your usual week."
+            case .unknown: return "Needs completed outings in at least 3 of the prior 4 weeks and a usual week of at least 30 minutes."
             case .low: return "A lighter week is fine for recovery. Rebuild gradually so you don't spike later."
-            case .steady: return "Your last 7 days are in line with your usual week. This is the sweet spot for getting fitter safely."
+            case .steady: return "Your recorded minutes are in line with your usual week. Minutes alone do not measure intensity or readiness."
             case .high: return "Much more than your usual week. Keep the next few days lighter."
             }
         }
@@ -129,13 +136,19 @@ struct LoadStatusCard: View {
             }
 
             HStack(spacing: 0) {
-                StatBlock(value: "\(Int(snapshot.acuteMinutes.rounded())) min", caption: "Last 7 days")
+                StatBlock(value: snapshot.acuteMinutes.map { "\(Int($0.rounded())) min" } ?? "—", caption: "Last 7 days")
+                    .accessibilityIdentifier("coach-acute")
                 StatBlock(
                     value: snapshot.chronicWeeklyMinutes.map { "\(Int($0.rounded())) min" } ?? "—",
                     caption: "Usual week"
                 )
+                .accessibilityIdentifier("coach-chronic")
                 StatBlock(value: "\(snapshot.streakWeeks)", caption: "Week streak")
             }
+
+            Text("Completed outings only. Interrupted recordings stay in your history.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Text(status.detail)
                 .font(.footnote)

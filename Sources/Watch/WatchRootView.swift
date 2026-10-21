@@ -65,29 +65,16 @@ private struct StartFootballView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
-                Image(systemName: "figure.soccer")
-                    .font(.system(size: 40, weight: .semibold))
-                    .foregroundStyle(accentGreen)
-                    .accessibilityHidden(true)
-
-                Text("Football Performance")
-                    .font(.title3)
-                    .bold()
-                    .multilineTextAlignment(.center)
-
-                Text("Your watch records on its own. No phone needed.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                Picker("Session type", selection: $recorder.selectedSessionType) {
-                    ForEach(FootballSessionTypeV1.allCases) { type in
-                        Text(type.title).tag(type)
-                    }
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "figure.soccer")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(accentGreen)
+                        .accessibilityHidden(true)
+                    Text("Football Performance")
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .pickerStyle(.navigationLink)
-                .accessibilityIdentifier("watch-session-type")
 
                 Button(action: recorder.startCountdown) {
                     Label("Start Football", systemImage: "play.fill")
@@ -97,6 +84,21 @@ private struct StartFootballView: View {
                 .tint(accentGreen)
                 .controlSize(.large)
                 .accessibilityHint("Starts after a three second countdown")
+                .accessibilityIdentifier("watch.start")
+
+                Picker("Session type", selection: $recorder.selectedSessionType) {
+                    ForEach(FootballSessionTypeV1.allCases) { type in
+                        Text(type.title).tag(type)
+                            .accessibilityIdentifier("watch.session-type.\(type.rawValue)")
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .accessibilityIdentifier("watch-session-type")
+
+                Text("Your watch records on its own. No phone needed.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
 
                 NavigationLink {
                     RecoveryStatusView(recorder: recorder)
@@ -109,6 +111,7 @@ private struct StartFootballView: View {
                                 .fill(Color.orange)
                                 .frame(width: 8, height: 8)
                                 .accessibilityLabel("Recovery or transfer work remains")
+                                .accessibilityIdentifier("watch.recovery.attention")
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -116,9 +119,11 @@ private struct StartFootballView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .accessibilityHint("Shows interrupted sessions and iPhone transfer status")
+                .accessibilityIdentifier("watch.recovery.open")
             }
             .padding(.horizontal, 8)
         }
+        .accessibilityIdentifier("watch.idle")
     }
 }
 
@@ -140,16 +145,19 @@ private struct RecoveryStatusView: View {
                             value: "\(aggregate.needsRecoveryCount)",
                             emphasized: aggregate.needsRecoveryCount > 0
                         )
+                        .accessibilityIdentifier("watch.recovery.needed")
                         statusRow(
                             "Recovered",
                             value: "\(aggregate.recoveredCount)/\(aggregate.sourceSessionCount)",
                             emphasized: false
                         )
+                        .accessibilityIdentifier("watch.recovery.recovered")
                         statusRow(
                             "Waiting for iPhone",
                             value: "\(aggregate.waitingForIPhoneCount)",
                             emphasized: false
                         )
+                        .accessibilityIdentifier("watch.recovery.waiting")
                         statusRow(
                             "Imported",
                             value: "\(aggregate.importedCount)",
@@ -202,6 +210,7 @@ private struct RecoveryStatusView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("watch.recovery.log")
                 }
 
                 if let message = recorder.recoveryMessage {
@@ -209,6 +218,7 @@ private struct RecoveryStatusView: View {
                         .font(.caption2)
                         .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("watch.recovery.message")
                 }
 
                 Button {
@@ -229,6 +239,7 @@ private struct RecoveryStatusView: View {
                 .controlSize(.large)
                 .disabled(recorder.isRecovering)
                 .accessibilityHint("Recovers interrupted sessions and queues them for iPhone transfer")
+                .accessibilityIdentifier("watch.recovery.recover")
 
                 Button {
                     dismiss()
@@ -240,10 +251,12 @@ private struct RecoveryStatusView: View {
                 .tint(accentGreen)
                 .controlSize(.large)
                 .accessibilityHint("Returns to the Football home screen")
+                .accessibilityIdentifier("watch.recovery.home")
             }
             .padding(.horizontal, 8)
         }
         .navigationTitle("Session Recovery")
+        .accessibilityIdentifier("watch.recovery.screen")
         .task {
             await recorder.refreshRecoveryAggregate()
         }
@@ -376,6 +389,7 @@ private struct CountdownView: View {
             .frame(width: 104, height: 104)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Starting in \(value)")
+            .accessibilityIdentifier("watch.countdown")
 
             Text("Get ready")
                 .font(.footnote)
@@ -383,6 +397,7 @@ private struct CountdownView: View {
 
             Button("Cancel", action: cancel)
                 .buttonStyle(.bordered)
+                .accessibilityIdentifier("watch.countdown.cancel")
         }
     }
 }
@@ -416,24 +431,29 @@ private struct ActiveFootballView: View {
                     .accessibilityLabel(
                         "Elapsed \(SessionFormatting.spokenElapsed(recorder.elapsed(at: context.date)))"
                     )
+                    .accessibilityIdentifier("watch.elapsed")
 
                 HStack(spacing: 6) {
                     MetricTile(
                         title: "HEART",
-                        value: recorder.currentHeartRate.map {
+                        value: recorder.heartRate(at: context.date).map {
                             "\(Int($0.rounded()))"
                         } ?? "—",
-                        unit: "BPM"
+                        unit: recorder.currentHeartRate != nil && recorder.heartRate(at: context.date) == nil
+                            ? "STALE" : "BPM"
                     )
+                    .accessibilityIdentifier("watch.metric.heart")
 
                     MetricTile(
                         title: "DISTANCE",
                         value: SessionFormatting.distance(recorder.distanceMeters),
                         unit: "KM"
                     )
+                    .accessibilityIdentifier("watch.metric.distance")
                 }
 
                 motionQualityRow
+                    .accessibilityIdentifier("watch.motion-status")
 
                 HoldToFinishButton(finish: recorder.finish)
             }
@@ -447,6 +467,7 @@ private struct ActiveFootballView: View {
                     Image(systemName: "ellipsis.circle")
                 }
                 .accessibilityLabel("More options")
+                .accessibilityIdentifier("watch.options")
             }
         }
         .navigationDestination(isPresented: $showsDiagnostics) {
@@ -465,6 +486,7 @@ private struct ActiveFootballView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Recording")
+        .accessibilityIdentifier("watch.recording")
     }
 
     /// One compact line. Full Hz/gap details live in the diagnostics screen.
@@ -530,6 +552,7 @@ private struct RecordingDiagnosticsView: View {
                 .padding(.horizontal, 4)
         }
         .navigationTitle("Motion Diagnostics")
+        .accessibilityIdentifier("watch.diagnostics")
     }
 }
 
@@ -649,6 +672,7 @@ private struct HoldToFinishButton: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityHint("Press and hold to save the football session")
             .accessibilityAction(named: Text("Finish session"), finish)
+            .accessibilityIdentifier("watch.finish")
     }
 
     private func pressingChanged(_ pressing: Bool) {
@@ -711,6 +735,7 @@ private struct SavedSessionView: View {
 
                 Text("Saved on Watch")
                     .font(.headline)
+                    .accessibilityIdentifier("watch.saved")
 
                 Label(
                     syncPresentation.title,
@@ -719,6 +744,7 @@ private struct SavedSessionView: View {
                 .font(.caption.bold())
                 .foregroundStyle(syncColor(for: syncPresentation))
                 .multilineTextAlignment(.center)
+                .accessibilityIdentifier("watch.saved.transfer")
 
                 healthStatus(summary.healthKitSaveOutcome)
 
@@ -755,11 +781,13 @@ private struct SavedSessionView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .accessibilityIdentifier("watch.saved.details.open")
 
                 Button("Done", action: recordAnother)
                     .buttonStyle(.borderedProminent)
                     .tint(accentGreen)
                     .controlSize(.large)
+                    .accessibilityIdentifier("watch.saved.done")
             }
             .padding(.horizontal, 6)
         }
@@ -853,6 +881,7 @@ private struct SavedSessionDetailsView: View {
             .padding(.horizontal, 6)
         }
         .navigationTitle("Details")
+        .accessibilityIdentifier("watch.saved.details")
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
@@ -883,6 +912,7 @@ private struct FailureView: View {
 
                 Text("Recording problem")
                     .font(.headline)
+                    .accessibilityIdentifier("watch.failure")
 
                 Text(message)
                     .font(.footnote)
@@ -898,7 +928,7 @@ private struct FailureView: View {
     }
 }
 
-private enum SessionFormatting {
+enum SessionFormatting {
     static func elapsed(_ interval: TimeInterval) -> String {
         let totalSeconds = max(0, Int(interval.rounded(.down)))
         let hours = totalSeconds / 3_600
@@ -912,7 +942,8 @@ private enum SessionFormatting {
         return "\(totalSeconds / 60) minutes \(totalSeconds % 60) seconds"
     }
 
-    static func distance(_ meters: Double) -> String {
-        String(format: "%.2f", max(0, meters) / 1_000)
+    static func distance(_ meters: Double?) -> String {
+        guard let meters else { return "—" }
+        return String(format: "%.2f", max(0, meters) / 1_000)
     }
 }

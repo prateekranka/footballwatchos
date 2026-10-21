@@ -96,6 +96,7 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var exportURL: URL?
     @Published private(set) var message: String?
     @Published private(set) var isLoading = false
+    @Published private(set) var hasLoadedSessions = false
     /// True while a Watch package is arriving or being imported.
     @Published private(set) var isReceivingFromWatch = false
     /// How many imported sessions have been pushed to the health pipeline.
@@ -128,6 +129,13 @@ final class PhoneSessionLibraryModel: ObservableObject {
     var repositoryUnavailable: Bool { repository == nil }
 
     var outboxAvailable: Bool { sessionPushOutbox != nil }
+
+    var isLibraryLoading: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if isSettingQAData { return true }
+        #endif
+        return !hasLoadedSessions
+    }
 
     #if DEBUG && targetEnvironment(simulator)
     @Published private(set) var qaScenario: QASessionScenario = .empty
@@ -230,7 +238,10 @@ final class PhoneSessionLibraryModel: ObservableObject {
 
     func refresh() async {
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoadedSessions = true
+        }
         if let repository {
             do {
                 try await repository.reconcileOnStartup()

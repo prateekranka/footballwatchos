@@ -3,6 +3,8 @@
 - Do not use FlowDeck on this machine — it is license-blocked. Use xcodebuild directly.
 - E2E journeys (XCUITest, the main way to test features):
   `xcodebuild test -project FootballPerformance.xcodeproj -scheme FootballPerformanceE2E -destination 'platform=iOS Simulator,id=CD369CF5-53C5-4EB2-9FC4-164D2716AAAC' -resultBundlePath build/E2E.xcresult`
+- Watch UI journeys (XCUITest):
+  `xcodebuild test -project FootballPerformance.xcodeproj -scheme FootballPerformanceWatchUITests -destination 'platform=watchOS Simulator,id=3BE5CDAE-63E6-48BF-A1F1-DD9DEE7E339C' -derivedDataPath /tmp/fp-redesign-watchui-dd -resultBundlePath .scratch/qa-20261021/WatchUI-uifix.xcresult`
 - CI (`.github/workflows/ios-ci.yml`) runs the E2E journeys and screenshots on a macOS runner for `claude/**` branches, uploads the result bundles, and pushes screenshots plus logs to the `ci-shots` branch.
 
 # Testing rules

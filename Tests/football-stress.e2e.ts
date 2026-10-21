@@ -30,6 +30,10 @@ test('one session, established baseline, dark mode, and RTL have real screen evi
   await fixture(ui, 'One');
   await app.screenshot('sessions-one');
   await tab(screen, 'Progress').tap();
+  const progress = screen.getByRole('scroll-view').first();
+  const building = screen.getByText('Building your baseline', { exact: true });
+  await progress.scrollUntilVisible(building, { direction: 'down', timeout: 60_000 });
+  await expect(building).toBeVisible();
   await app.screenshot('progress-building-baseline');
   await fixture(ui, 'Demo data');
   await app.screenshot('sessions-demo-light');
@@ -49,6 +53,10 @@ test('one session, established baseline, dark mode, and RTL have real screen evi
   await app.back();
   await app.back();
   await tab(screen, 'Progress').tap();
+  await progress.scrollUntilVisible(progress.getByText('Progress', { exact: true }), { direction: 'up', timeout: 60_000 });
+  const baseline = screen.getByText('Your recent baseline', { exact: true });
+  await progress.scrollUntilVisible(baseline, { direction: 'down', timeout: 60_000 });
+  await expect(baseline).toBeVisible();
   await app.screenshot('progress-established-top');
   await screen.getByRole('scroll-view').first().swipe({ direction: 'down' });
   await app.screenshot('progress-established-lower');
