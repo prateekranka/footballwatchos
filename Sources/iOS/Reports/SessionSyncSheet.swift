@@ -59,6 +59,8 @@ struct SyncStatusPill: View {
 struct SyncPresentation: Equatable {
     enum Kind: Equatable {
         case receiving
+        case waitingOnWatch(count: Int)
+        case watchNeedsAction(count: Int)
         case uploading
         case needsAttention
         case pendingUploads(count: Int)
@@ -74,7 +76,11 @@ struct SyncPresentation: Equatable {
     var title: String {
         switch kind {
         case .receiving:
-            return "Receiving from Apple Watch…"
+            return "Receiving a session from Apple Watch…"
+        case .waitingOnWatch(let count):
+            return count == 1 ? "1 session still on Apple Watch" : "\(count) sessions still on Apple Watch"
+        case .watchNeedsAction(let count):
+            return count == 1 ? "1 Watch session needs attention" : "\(count) Watch sessions need attention"
         case .uploading:
             return "Backing up…"
         case .needsAttention:
@@ -95,6 +101,8 @@ struct SyncPresentation: Equatable {
     var symbolName: String {
         switch kind {
         case .receiving: return "applewatch.radiowaves.left.and.right"
+        case .waitingOnWatch: return "applewatch.radiowaves.left.and.right"
+        case .watchNeedsAction: return "applewatch.slash"
         case .uploading: return "icloud.and.arrow.up"
         case .needsAttention: return "exclamationmark.triangle.fill"
         case .pendingUploads: return "icloud.and.arrow.up"
@@ -107,8 +115,8 @@ struct SyncPresentation: Equatable {
 
     var tint: Color {
         switch kind {
-        case .receiving, .uploading: return PerformanceTheme.accent
-        case .needsAttention, .storageUnavailable: return PerformanceTheme.warning
+        case .receiving, .uploading, .waitingOnWatch: return PerformanceTheme.accent
+        case .needsAttention, .storageUnavailable, .watchNeedsAction: return PerformanceTheme.warning
         case .pendingUploads: return .secondary
         case .upToDate: return PerformanceTheme.accent
         case .waitingForFirst: return .secondary
@@ -125,6 +133,18 @@ struct SyncPresentation: Equatable {
         if model.isReceivingFromWatch {
             self.init(kind: .receiving, detail: nil)
             return
+        }
+        // Getting sessions off the Watch matters more than the backup, so
+        // Watch states outrank backup states.
+        if let status = model.watchStatus {
+            if status.waiting > 0 {
+                self.init(kind: .waitingOnWatch(count: status.waiting), detail: nil)
+                return
+            }
+            if status.failed + status.needsRecovery > 0 {
+                self.init(kind: .watchNeedsAction(count: status.failed + status.needsRecovery), detail: nil)
+                return
+            }
         }
         if let error = model.outboxLastError {
             self.init(kind: .needsAttention, detail: error)
@@ -167,14 +187,27 @@ struct SessionSyncSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                     section(title: "Apple Watch") {
+                        watchStatusCard
+                        if let status = model.watchStatus {
+                            row("Saved on your Watch", value: "\(status.savedOnWatch)")
+                            row("Still to send", value: "\(status.waiting)")
+                            if status.failed > 0 {
+                                row("Did not send", value: "\(status.failed)")
+                            }
+                            if status.needsRecovery > 0 {
+                                row("Need Recover on Watch", value: "\(status.needsRecovery)")
+                            }
+                        }
                         row(
                             "Sessions on this iPhone",
                             value: "\(model.sessions.filter { !$0.isManualEntry }.count)"
                         )
-                        row(
-                            "Receiving now",
-                            value: model.isReceivingFromWatch ? "Yes" : "No"
-                        )
+                        if let status = model.watchStatus {
+                            row("Watch last reported", value: Self.relative(status.updatedAt))
+                        }
+                        if let delivered = model.lastWatchDeliveryAt {
+                            row("Last file received", value: Self.relative(delivered))
+                        }
                     }
 
                     section(title: "Private backup") {
@@ -261,10 +294,55 @@ struct SessionSyncSheet: View {
         #endif
     }
 
+    private var watchStatusCard: some View {
+        let summary = WatchTransferSummary(
+            isReceiving: model.isReceivingFromWatch,
+            status: model.watchStatus
+        )
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if model.isReceivingFromWatch {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: summary.symbolName)
+                        .foregroundStyle(summary.isWarning ? PerformanceTheme.warning : PerformanceTheme.accent)
+                        .accessibilityHidden(true)
+                }
+                Text(summary.headline)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let progress = summary.progress {
+                ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                    .tint(PerformanceTheme.accent)
+                    .accessibilityLabel("\(progress.done) of \(progress.total) Watch sessions on this iPhone")
+                Text("\(progress.done) of \(progress.total) Watch sessions are on this iPhone")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Text(summary.explanation)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(PerformanceTheme.cardInset)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("sync-watch-status")
+    }
+
+    private static func relative(_ date: Date) -> String {
+        if Date().timeIntervalSince(date) < 60 { return "Just now" }
+        return date.formatted(.relative(presentation: .named))
+    }
+
     /// Presents raw transport errors as sentences a reader can act on. The
     /// original text stays in the durable outbox state; only the display
     /// changes, and unknown errors pass through untouched.
     static func friendlyBackupError(_ message: String) -> String {
+        if message.contains("missingToken") {
+            return "Backup is not set up in this version of the app. Your sessions stay safe on this iPhone."
+        }
         if message.contains("401") || message.lowercased().contains("unauthorized") {
             return "The backup service rejected access to this iPhone's credential."
         }
@@ -300,5 +378,71 @@ struct SessionSyncSheet: View {
         AdaptiveDetailRow(title: title, value: value)
         .padding(.horizontal, PerformanceTheme.cardInset)
         .padding(.vertical, 11)
+    }
+}
+
+/// What the Watch transfer is doing, in words, for the Sync sheet. Built from
+/// the Watch's own report, because the iPhone cannot see a transfer until
+/// the file lands.
+struct WatchTransferSummary: Equatable {
+    struct Progress: Equatable {
+        let done: Int
+        let total: Int
+    }
+
+    let headline: String
+    let explanation: String
+    let symbolName: String
+    let isWarning: Bool
+    let progress: Progress?
+
+    init(isReceiving: Bool, status: WatchSyncStatusV1?) {
+        progress = status.flatMap { status in
+            status.savedOnWatch > 0 ? Progress(done: status.onIPhone, total: status.savedOnWatch) : nil
+        }
+
+        if isReceiving {
+            headline = "Receiving a session now"
+            explanation = "Sessions arrive one at a time. Each one is checked and saved before the next."
+            symbolName = "applewatch.radiowaves.left.and.right"
+            isWarning = false
+            return
+        }
+        guard let status else {
+            headline = "No report from your Watch yet"
+            explanation = "Open the app on your Watch. It then tells this iPhone what it has to send."
+            symbolName = "applewatch"
+            isWarning = false
+            return
+        }
+        if status.waiting > 0 {
+            headline = status.waiting == 1
+                ? "1 session still on your Watch"
+                : "\(status.waiting) sessions still on your Watch"
+            explanation = "Your Watch sends them in the background, one at a time. Keep it near this iPhone with Bluetooth on. If nothing arrives, open the app on your Watch."
+            symbolName = "applewatch.radiowaves.left.and.right"
+            isWarning = false
+            return
+        }
+        if status.needsRecovery > 0 {
+            headline = status.needsRecovery == 1
+                ? "1 recording stopped early"
+                : "\(status.needsRecovery) recordings stopped early"
+            explanation = "On your Watch, open Session Recovery and tap Recover. The Watch then sends them here."
+            symbolName = "exclamationmark.triangle.fill"
+            isWarning = true
+            return
+        }
+        if status.failed > 0 {
+            headline = status.failed == 1 ? "1 session did not send" : "\(status.failed) sessions did not send"
+            explanation = "The Watch tries again the next time you open the app on it."
+            symbolName = "exclamationmark.triangle.fill"
+            isWarning = true
+            return
+        }
+        headline = status.savedOnWatch == 0 ? "No sessions on your Watch" : "All Watch sessions are here"
+        explanation = "Your Watch has nothing left to send."
+        symbolName = "checkmark.circle.fill"
+        isWarning = false
     }
 }

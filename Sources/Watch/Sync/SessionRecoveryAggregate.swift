@@ -182,3 +182,59 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
         )
     }
 }
+
+extension WatchSyncStatusV1 {
+    /// Counts unique original session UUIDs, like the recovery aggregate, so
+    /// recovered copies and repeat outbox records never inflate a number.
+    /// "On iPhone" needs a receipt; framework completion alone is waiting.
+    static func compute(
+        discovered: [StoredSessionPackageV1],
+        outboxRecords: [WatchTransferOutboxRecordV1],
+        excludingPartialFilename: String? = nil,
+        now: Date = Date()
+    ) -> WatchSyncStatusV1 {
+        var saved = Set<UUID>()
+        var interrupted = Set<UUID>()
+        var recovered = Set<UUID>()
+        for package in discovered {
+            if package.kind == .partial, package.filename == excludingPartialFilename { continue }
+            guard let sessionID = SessionRecoveryFilenameV1.sessionID(from: package.filename) else {
+                continue
+            }
+            switch package.kind {
+            case .partial:
+                interrupted.insert(sessionID)
+            case .sealed:
+                saved.insert(sessionID)
+                if SessionRecoveryFilenameV1.isRecoveredCopy(package.filename) {
+                    recovered.insert(sessionID)
+                }
+            }
+        }
+
+        var imported = Set<UUID>()
+        var active = Set<UUID>()
+        var failed = Set<UUID>()
+        for record in outboxRecords {
+            switch record.status {
+            case .imported:
+                imported.insert(record.key.sessionID)
+            case .pending, .queued, .waitingForReceipt:
+                active.insert(record.key.sessionID)
+            case .retryableFailure:
+                failed.insert(record.key.sessionID)
+            }
+        }
+
+        let notOnIPhone = saved.subtracting(imported)
+        let failedOnly = notOnIPhone.subtracting(active).intersection(failed)
+        return WatchSyncStatusV1(
+            savedOnWatch: saved.count,
+            onIPhone: saved.intersection(imported).count,
+            waiting: notOnIPhone.subtracting(failedOnly).count,
+            failed: failedOnly.count,
+            needsRecovery: interrupted.subtracting(recovered).count,
+            updatedAt: now
+        )
+    }
+}

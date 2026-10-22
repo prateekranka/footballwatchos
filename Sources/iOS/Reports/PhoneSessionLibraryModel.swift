@@ -99,6 +99,14 @@ final class PhoneSessionLibraryModel: ObservableObject {
     @Published private(set) var hasLoadedSessions = false
     /// True while a Watch package is arriving or being imported.
     @Published private(set) var isReceivingFromWatch = false
+    /// The Watch's latest report of what it still holds, if it ever sent one.
+    @Published private(set) var watchStatus: WatchSyncStatusV1? = WatchSyncStatusStore.load()
+    /// When the last file from the Watch finished arriving.
+    @Published private(set) var lastWatchDeliveryAt: Date? =
+        UserDefaults.standard.object(forKey: PhoneSessionLibraryModel.lastDeliveryKey) as? Date
+    /// Files can overlap, so one finishing must not hide another in flight.
+    private var deliveriesInFlight = 0
+    private static let lastDeliveryKey = "lastWatchDeliveryAt"
     /// How many imported sessions have been pushed to the health pipeline.
     @Published private(set) var pipelinePushedCount = 0
     /// Last successful pipeline push time, if any.
@@ -188,9 +196,13 @@ final class PhoneSessionLibraryModel: ObservableObject {
 
         let receivedName = PhoneWatchConnectivityCoordinator.sessionReceivedNotification
         let importedName = PhoneWatchConnectivityCoordinator.sessionImportedNotification
+        let finishedName = PhoneWatchConnectivityCoordinator.deliveryFinishedNotification
+        let watchStatusName = PhoneWatchConnectivityCoordinator.watchStatusNotification
         let progressName = PipelinePushService.progressDidChange
         let outboxProgressName = SessionPushOutbox.didChange
-        for name in [receivedName, importedName, progressName, outboxProgressName] {
+        for name in [
+            receivedName, importedName, finishedName, watchStatusName, progressName, outboxProgressName,
+        ] {
             let token = NotificationCenter.default.addObserver(
                 forName: name,
                 object: nil,
@@ -207,10 +219,18 @@ final class PhoneSessionLibraryModel: ObservableObject {
     private func handleSyncNotification(name: Notification.Name) async {
         switch name {
         case PhoneWatchConnectivityCoordinator.sessionReceivedNotification:
+            deliveriesInFlight += 1
             isReceivingFromWatch = true
+        case PhoneWatchConnectivityCoordinator.deliveryFinishedNotification:
+            deliveriesInFlight = max(0, deliveriesInFlight - 1)
+            isReceivingFromWatch = deliveriesInFlight > 0
+            let now = Date()
+            lastWatchDeliveryAt = now
+            UserDefaults.standard.set(now, forKey: Self.lastDeliveryKey)
         case PhoneWatchConnectivityCoordinator.sessionImportedNotification:
-            isReceivingFromWatch = false
             await refresh()
+        case PhoneWatchConnectivityCoordinator.watchStatusNotification:
+            watchStatus = WatchSyncStatusStore.load()
         case PipelinePushService.progressDidChange:
             await refreshPipelineProgress()
         case SessionPushOutbox.didChange:

@@ -179,20 +179,37 @@ struct SessionsHomeView: View {
         }
     }
 
+    private var waitingOnWatch: Int { model.watchStatus?.waiting ?? 0 }
+
+    private var watchHasSessionsComing: Bool {
+        model.isReceivingFromWatch || waitingOnWatch > 0
+    }
+
+    private var emptyStateTitle: String {
+        if model.isReceivingFromWatch { return "Receiving your first session" }
+        if waitingOnWatch > 0 { return "Your sessions are on the way" }
+        return "No sessions yet"
+    }
+
+    private var emptyStateMessage: String {
+        if model.isReceivingFromWatch { return "Your Apple Watch is transferring a recording now." }
+        if waitingOnWatch > 0 {
+            let sessions = waitingOnWatch == 1 ? "1 session" : "\(waitingOnWatch) sessions"
+            return "Your Apple Watch has \(sessions) to send. Each one shows here when it arrives."
+        }
+        return "Start a Football Session on your watch, or add a manual log on this iPhone."
+    }
+
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Image(systemName: model.isReceivingFromWatch ? "applewatch.radiowaves.left.and.right" : "figure.soccer")
+            Image(systemName: watchHasSessionsComing ? "applewatch.radiowaves.left.and.right" : "figure.soccer")
                 .font(.system(size: 40, weight: .semibold))
                 .foregroundStyle(PerformanceTheme.highlight)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 6) {
-                Text(model.isReceivingFromWatch ? "Receiving your first session" : "No sessions yet")
+                Text(emptyStateTitle)
                     .font(.title2.weight(.bold))
-                Text(
-                    model.isReceivingFromWatch
-                        ? "Your Apple Watch is transferring a recording now."
-                        : "Start a Football Session on your watch, or add a manual log on this iPhone."
-                )
+                Text(emptyStateMessage)
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)

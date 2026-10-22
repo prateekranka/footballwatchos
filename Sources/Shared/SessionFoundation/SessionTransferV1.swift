@@ -280,3 +280,62 @@ public enum PlayerProfileContextV1 {
         return value
     }
 }
+
+/// The Watch's own count of its saved sessions and how far each got toward
+/// the iPhone. The iPhone cannot see transfers until a file lands, so without
+/// this it can only guess at what is still on the Watch.
+public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
+    public static let contextKey = "watchSyncStatus"
+
+    /// Unique sessions saved on the Watch.
+    public let savedOnWatch: Int
+    /// Sessions the iPhone confirmed with an import receipt.
+    public let onIPhone: Int
+    /// Sessions queued, in flight, or not yet offered to the iPhone.
+    public let waiting: Int
+    /// Sessions whose last send failed; the next Watch launch retries them.
+    public let failed: Int
+    /// Interrupted recordings that need Recover on the Watch first.
+    public let needsRecovery: Int
+    public let updatedAt: Date
+
+    public init(
+        savedOnWatch: Int,
+        onIPhone: Int,
+        waiting: Int,
+        failed: Int,
+        needsRecovery: Int,
+        updatedAt: Date
+    ) {
+        self.savedOnWatch = savedOnWatch
+        self.onIPhone = onIPhone
+        self.waiting = waiting
+        self.failed = failed
+        self.needsRecovery = needsRecovery
+        self.updatedAt = updatedAt
+    }
+
+    /// Same counts, ignoring when they were taken.
+    public func hasSameCounts(as other: WatchSyncStatusV1) -> Bool {
+        savedOnWatch == other.savedOnWatch && onIPhone == other.onIPhone
+            && waiting == other.waiting && failed == other.failed
+            && needsRecovery == other.needsRecovery
+    }
+
+    public func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        return try encoder.encode(self)
+    }
+
+    public static func decode(_ data: Data) throws -> WatchSyncStatusV1 {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(WatchSyncStatusV1.self, from: data)
+    }
+
+    public static func decode(context: [String: Any]) -> WatchSyncStatusV1? {
+        guard let data = context[contextKey] as? Data else { return nil }
+        return try? decode(data)
+    }
+}

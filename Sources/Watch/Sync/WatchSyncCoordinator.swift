@@ -98,6 +98,8 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
     private var outboxFailure: String?
     private var diagnosticSubmissionInProgress = false
     private var receiptRetryTask: Task<Void, Never>?
+    private var pendingStatus: WatchSyncStatusV1?
+    private var publishedStatus: WatchSyncStatusV1?
 
     override init() {
         diagnosticJournal = WatchDiagnosticRuntime.shared.journal
@@ -196,10 +198,38 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         submitClaimedRecordsIfEligible()
     }
 
+    /// Tells the iPhone how many sessions are still on the Watch. Application
+    /// context keeps only the latest value and is delivered when the iPhone
+    /// app next runs, which suits a status that is replaced, never queued.
+    func publish(_ status: WatchSyncStatusV1) {
+        pendingStatus = status
+        publishPendingStatusIfEligible()
+    }
+
+    private func publishPendingStatusIfEligible() {
+        guard let status = pendingStatus,
+              let session,
+              session.activationState == .activated,
+              session.isCompanionAppInstalled else { return }
+        // Unchanged counts only refresh the "last checked in" time, and not
+        // more than once a minute, so a busy outbox does not flood the link.
+        if let publishedStatus, publishedStatus.hasSameCounts(as: status),
+           status.updatedAt.timeIntervalSince(publishedStatus.updatedAt) < 60 {
+            return
+        }
+        do {
+            try session.updateApplicationContext([WatchSyncStatusV1.contextKey: try status.encoded()])
+            publishedStatus = status
+        } catch {
+            WatchLog.recorder.logError("publishSyncStatus failed", error: error)
+        }
+    }
+
     private func activatedOrUpdated() {
         if let session {
             Self.storePlayerProfile(session.receivedApplicationContext)
         }
+        publishPendingStatusIfEligible()
         reconcileOutstandingTransfers()
         submitClaimedRecordsIfEligible()
         submitPendingDiagnosticsIfEligible()

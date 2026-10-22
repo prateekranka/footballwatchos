@@ -13,6 +13,16 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     static let sessionImportedNotification = Notification.Name(
         "com.prateekranka.footballperformance.sessionImported"
     )
+    /// Posted once for every received file, whatever happened to it. A repeat
+    /// or rejected file never posts `sessionImportedNotification`, so
+    /// "receiving" must end here instead.
+    static let deliveryFinishedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.deliveryFinished"
+    )
+    /// Posted when the Watch reports a new count of its saved sessions.
+    static let watchStatusNotification = Notification.Name(
+        "com.prateekranka.footballperformance.watchStatus"
+    )
 
     private let repository: FileSessionRepository
     private let diagnosticRepository: PhoneDiagnosticRepository
@@ -79,6 +89,18 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         _ = error.map { String(describing: $0) }
         requeueDurableReceipts()
         sendPlayerProfile()
+        storeWatchStatus(from: session.receivedApplicationContext)
+    }
+
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        storeWatchStatus(from: applicationContext)
+    }
+
+    private func storeWatchStatus(from context: [String: Any]) {
+        guard let status = WatchSyncStatusV1.decode(context: context) else { return }
+        if let stored = WatchSyncStatusStore.load(), stored.updatedAt >= status.updatedAt { return }
+        WatchSyncStatusStore.save(status)
+        NotificationCenter.default.post(name: Self.watchStatusNotification, object: nil)
     }
 
     func sessionWatchStateDidChange(_ session: WCSession) {
@@ -112,6 +134,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
             // itself did not finish.
             let failureDescription = String(describing: error)
             NSLog("FootballPerformance could not stage a Watch package: %@", failureDescription)
+            NotificationCenter.default.post(name: Self.deliveryFinishedNotification, object: nil)
             return
         }
 
@@ -179,6 +202,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         let outbox = sessionPushOutbox
         Task { [weak self, repository, outbox] in
             let outcome = await repository.importStaged(deliveryID: deliveryID)
+            NotificationCenter.default.post(name: Self.deliveryFinishedNotification, object: nil)
             guard let payload = outcome.receiptPayload else { return }
             self?.queueReceipt(payload)
             if case let .imported(record, _) = outcome {
@@ -212,6 +236,20 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
 
     private func queueDiagnosticReceipt(_ payload: Data) {
         session.transferUserInfo([WatchDiagnosticTransferCodecV1.receiptKey: payload])
+    }
+}
+
+/// The last Watch status survives relaunch, so the iPhone can say what the
+/// Watch still holds before the Watch next checks in.
+enum WatchSyncStatusStore {
+    static func load(defaults: UserDefaults = .standard) -> WatchSyncStatusV1? {
+        guard let data = defaults.data(forKey: WatchSyncStatusV1.contextKey) else { return nil }
+        return try? WatchSyncStatusV1.decode(data)
+    }
+
+    static func save(_ status: WatchSyncStatusV1, defaults: UserDefaults = .standard) {
+        guard let data = try? status.encoded() else { return }
+        defaults.set(data, forKey: WatchSyncStatusV1.contextKey)
     }
 }
 

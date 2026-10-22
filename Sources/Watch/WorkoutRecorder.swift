@@ -1084,10 +1084,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         }
         do {
             let discovered = try await repository.discover()
+            let records = syncCoordinator.outboxRecords()
             recoveryAggregate = SessionRecoveryAggregateV1.compute(
                 discovered: discovered,
-                outboxRecords: syncCoordinator.outboxRecords(),
+                outboxRecords: records,
                 excludingPartialFilename: protectedPartialFilename
+            )
+            syncCoordinator.publish(
+                WatchSyncStatusV1.compute(
+                    discovered: discovered,
+                    outboxRecords: records,
+                    excludingPartialFilename: protectedPartialFilename
+                )
             )
         } catch {
             recoveryAggregate = nil
