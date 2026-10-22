@@ -183,6 +183,19 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         submitClaimedRecordsIfEligible()
     }
 
+    /// Filenames the outbox already tracks, read fresh so a launch-time sweep
+    /// does not re-inspect packages the cache has not loaded yet.
+    func trackedPackageFilenames() async -> Set<String> {
+        await refreshCachedStateNow()
+        return Set(cachedRecords.values.map(\.packageFilename))
+    }
+
+    func renewFailedTransfers() async throws {
+        try await outbox?.renewFailedTransferBudget()
+        await refreshCachedStateNow()
+        submitClaimedRecordsIfEligible()
+    }
+
     private func activatedOrUpdated() {
         if let session {
             Self.storePlayerProfile(session.receivedApplicationContext)

@@ -82,6 +82,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     private var finishingWatchdogTask: Task<Void, Never>?
     let launchRecoverySync: LaunchRecoverySync
     private var didRequestAuthorization = false
+    private var didSyncStoredSessions = false
     private var finishRequested = false
     private var storageQualityError: String?
     private var captureGapMessage: String?
@@ -183,6 +184,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 if success {
                     WatchLog.recorder.info("prepare: HealthKit authorization granted")
                     self.phase = .idle
+                    self.syncStoredSessionsOnLaunch()
                     self.startUIQAAutomationIfRequested()
                 } else {
                     WatchLog.recorder.logError(
@@ -191,6 +193,35 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                     )
                     self.phase = .failed(failure ?? "Health access was not granted.")
                 }
+            }
+        }
+    }
+
+    /// Sealed sessions from an older build, or ones whose transfer ran out of
+    /// attempts, used to wait for a Recover tap. Re-offering a sealed package
+    /// is safe (the iPhone answers a duplicate with a receipt), so do it once
+    /// per launch. Partials stay button-driven: scanning them at launch risked
+    /// jetsam on long packages.
+    private func syncStoredSessionsOnLaunch() {
+        guard !didSyncStoredSessions, let repository else { return }
+        didSyncStoredSessions = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.syncCoordinator.renewFailedTransfers()
+                let tracked = await self.syncCoordinator.trackedPackageFilenames()
+                let untracked = try await repository.discover()
+                    .filter { $0.kind == .sealed && !tracked.contains($0.filename) }
+                WatchLog.recorder.info("launchSessionSync: \(untracked.count, privacy: .public) untracked sealed sessions")
+                for package in untracked {
+                    // A recording owns the CPU; the next launch picks up the rest.
+                    guard self.phase == .idle else { return }
+                    let url = repository.sessionsDirectory
+                        .appendingPathComponent(package.filename, isDirectory: false)
+                    await self.launchRecoverySync.submitDiscoveredPackage(at: url)
+                }
+            } catch {
+                WatchLog.recorder.logError("launchSessionSync failed", error: error)
             }
         }
     }

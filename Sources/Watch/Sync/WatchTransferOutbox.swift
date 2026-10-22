@@ -168,6 +168,18 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         }
     }
 
+    /// A new launch gets a fresh attempt budget. Without this, a package that
+    /// used up its attempts (for example under an older build, or while the
+    /// iPhone app was missing) waited for a manual Recover tap forever.
+    mutating func renewFailedTransferBudget(now: Date) {
+        for record in records.values where record.status == .retryableFailure {
+            mutate(record.key, now: now) {
+                $0.status = .pending
+                $0.attemptCount = 0
+            }
+        }
+    }
+
     /// An outstanding transfer is retained as queued. If it disappeared before
     /// this process observed its completion callback, retry on a later
     /// activation rather than fabricating an imported state.
@@ -312,6 +324,14 @@ actor WatchTransferOutbox {
     func retryFailedTransfers(now: Date = Date()) throws {
         state.retryFailedTransfers(now: now)
         try persist()
+    }
+
+    func renewFailedTransferBudget(now: Date = Date()) throws {
+        let before = state
+        state.renewFailedTransferBudget(now: now)
+        if state != before {
+            try persist()
+        }
     }
 
     func packageURL(for record: WatchTransferOutboxRecordV1) -> URL {
