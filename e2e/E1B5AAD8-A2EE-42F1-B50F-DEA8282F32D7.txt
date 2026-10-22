@@ -1,0 +1,160 @@
+Attributes: Application, 0x118d92d00, pid: 20285, label: 'Football Performance'
+Element subtree:
+ →Application, 0x118d92d00, pid: 20285, label: 'Football Performance'
+    Window (Main), 0x118d92e40, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x118d90280, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x118d903c0, {{0.0, 0.0}, {420.0, 912.0}}
+          Other, 0x118d90500, {{0.0, 0.0}, {420.0, 912.0}}
+            Other, 0x118d92bc0, {{0.0, 0.0}, {420.0, 912.0}}
+              Other, 0x118d90640, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118d92a80, {{0.0, 0.0}, {420.0, 912.0}}
+                  Other, 0x118d91540, {{0.0, 0.0}, {420.0, 912.0}}
+                    Other, 0x118d92080, {{0.0, 0.0}, {420.0, 912.0}}
+                      Other, 0x118d921c0, {{0.0, 0.0}, {420.0, 912.0}}
+                        Other, 0x118d92940, {{0.0, 0.0}, {420.0, 912.0}}
+                          Other, 0x118d92800, {{0.0, 0.0}, {420.0, 912.0}}
+                            NavigationBar, 0x118d92300, {{0.0, 68.0}, {420.0, 54.0}}, identifier: 'Wed, Oct 21'
+                              Button, 0x118d926c0, {{20.0, 68.0}, {44.0, 44.0}}, identifier: 'BackButton', label: 'Back'
+                              StaticText, 0x118d92580, {{162.0, 79.7}, {96.0, 20.7}}, label: 'Wed, Oct 21'
+                              Other, 0x118d92440, {{360.0, 72.0}, {36.0, 36.0}}, label: 'Session actions'
+                                Other, 0x118d91680, {{360.0, 72.0}, {36.0, 36.0}}
+                                  Button, 0x118d917c0, {{363.0, 72.0}, {30.0, 36.0}}, label: 'Session actions'
+                                    Button, 0x118d91f40, {{363.0, 72.0}, {30.0, 36.0}}
+                                      Image, 0x118d91e00, {{367.0, 79.0}, {22.0, 22.0}}, identifier: 'ellipsis.circle', label: 'More'
+                            Other, 0x118d91900, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118d91cc0, {{0.0, 0.0}, {420.0, 912.0}}
+                                Other, 0x118d91b80, {{0.0, 0.0}, {420.0, 912.0}}
+                                  Other, 0x118d91a40, {{0.0, 0.0}, {420.0, 912.0}}
+                                    ScrollView, 0x118d90b40, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x118d90c80, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x118d90dc0, {{0.0, 0.0}, {420.0, 176.8}}
+                                        Other, 0x118d91400, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x118d90f00, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x118d912c0, {{0.0, 764.2}, {420.0, 147.8}}
+                                          Image, 0x118d91180, {{-120.0, 769.0}, {660.0, 286.0}}, identifier: 'AdditionalDimmingOverlay'
+                                          Other, 0x118d91040, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x118d90a00, {{0.0, 764.2}, {420.0, 147.8}}
+                                          Other, 0x118d90780, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x118d908c0, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x118d90140, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x118d90000, {{0.0, 122.0}, {420.0, 1673.0}}
+                                        Other, 0x118d93200, {{20.0, 126.0}, {380.0, 148.7}}, identifier: 'session-hero'
+                                          Other, 0x118d93340, {{20.0, 126.0}, {380.0, 148.7}}
+                                          Image, 0x118d93480, {{38.0, 144.0}, {44.0, 44.0}}, identifier: 'figure.soccer', label: 'figure.soccer'
+                                          StaticText, 0x118d935c0, {{94.0, 147.0}, {208.7, 20.3}}, label: 'Football · Watch recording'
+                                          StaticText, 0x118d93700, {{94.0, 169.3}, {206.3, 15.7}}, label: 'Wednesday, October 21 · 11:31 AM'
+                                          StaticText, 0x118d93840, {{38.0, 204.0}, {104.0, 52.7}}, identifier: 'session-hero-duration', label: '45 min, Duration'
+                                            StaticText, 0x118d93980, {{38.0, 204.0}, {104.0, 38.3}}, label: '45 min'
+                                            StaticText, 0x118d93ac0, {{38.0, 242.3}, {50.0, 14.3}}, label: 'Duration'
+                                          StaticText, 0x118d93d40, {{158.0, 211.3}, {78.3, 43.0}}, identifier: 'session-hero-distance', label: '4.2 km, Distance'
+                                            StaticText, 0x118d93e80, {{158.0, 211.3}, {78.3, 28.7}}, label: '4.2 km'
+                                            StaticText, 0x118d93c00, {{158.0, 240.0}, {51.0, 14.3}}, label: 'Distance'
+                                          StaticText, 0x118c95b80, {{278.0, 211.3}, {103.3, 43.0}}, identifier: 'session-hero-heart', label: '128 bpm, Avg heart rate'
+                                            StaticText, 0x118c95a40, {{278.0, 211.3}, {103.3, 28.7}}, label: '128 bpm'
+                                            StaticText, 0x1188d9f40, {{278.0, 240.0}, {81.7, 14.3}}, label: 'Avg heart rate'
+                                        Other, 0x1188da300, {{20.0, 298.7}, {380.0, 323.0}}
+                                          StaticText, 0x1188da440, {{36.0, 314.7}, {125.0, 20.3}}, label: 'How it unfolded'
+                                          StaticText, 0x1188dabc0, {{345.0, 319.7}, {39.0, 14.3}}, label: '45 min'
+                                          Other, 0x1188daa80, {{36.0, 347.0}, {324.0, 152.0}}, label: 'Heart rate across the session', value: No time selected
+                                            Other, 0x1188dad00, {{36.0, 347.0}, {36.0, 152.0}}, label: '0 to 5', value: 128 to 132, increa...
+                                            Other, 0x1188da1c0, {{72.0, 347.0}, {36.0, 152.0}}, label: '5 to 10', value: starts at 133, var...
+                                            Other, 0x1188da080, {{108.0, 347.0}, {36.0, 152.0}}, label: '10 to 15', value: starts at 131, var...
+                                            Other, 0x1188db840, {{144.0, 347.0}, {36.0, 152.0}}, label: '15 to 20', value: 129 to 133, increa...
+                                            Other, 0x1188da940, {{180.0, 347.0}, {36.0, 152.0}}, label: '20 to 25', value: starts at 134, var...
+                                            Other, 0x1188da800, {{216.0, 347.0}, {36.0, 152.0}}, label: '25 to 30', value: starts at 132, var...
+                                            Other, 0x1188da6c0, {{252.0, 347.0}, {36.0, 152.0}}, label: '30 to 35', value: 130 to 134, increa...
+                                            Other, 0x1188da580, {{288.0, 347.0}, {36.0, 152.0}}, label: '35 to 40', value: 128 to 132, increa...
+                                            Other, 0x118a18500, {{324.0, 347.0}, {36.0, 152.0}}, label: '40 to 45', value: starts at 133, var...
+                                            Other, 0x118a192c0, {{360.0, 347.0}, {36.0, 152.0}}, label: '45 to 50', value: 131 to 131, 2 values
+                                          Other, 0x118a18000, {{36.0, 347.0}, {324.0, 152.0}}, label: 'Heart rate across the session', value: No time selected
+                                          Other, 0x118a18140, {{36.0, 529.0}, {348.0, 34.0}}, label: 'Distance per minute across the session'
+                                            Other, 0x118a18280, {{34.8, 529.0}, {33.4, 34.0}}, label: '0 to 5', value: 0.02 to 1, increas...
+                                            Other, 0x118a18780, {{73.4, 529.0}, {33.4, 34.0}}, label: '5 to 10', value: starts at 1, varie...
+                                            Other, 0x118a18640, {{112.1, 529.0}, {33.4, 34.0}}, label: '10 to 15', value: 1 to 1, increases ...
+                                            Other, 0x118a183c0, {{150.8, 529.0}, {33.4, 34.0}}, label: '15 to 20', value: starts at 1, varie...
+                                            Other, 0x118b4d2c0, {{189.4, 529.0}, {33.4, 34.0}}, label: '20 to 25', value: starts at 1, varie...
+                                            Other, 0x118b4f480, {{228.1, 529.0}, {33.4, 34.0}}, label: '25 to 30', value: starts at 1, varie...
+                                            Other, 0x118b4dcc0, {{266.8, 529.0}, {33.4, 34.0}}, label: '30 to 35', value: starts at 1, varie...
+                                            Other, 0x118b4e300, {{305.4, 529.0}, {33.4, 34.0}}, label: '35 to 40', value: starts at 1, varie...
+                                            Other, 0x118b4f700, {{344.1, 529.0}, {33.4, 34.0}}, label: '40 to 45', value: 1 to 1, increases ...
+                                            Other, 0x118b4ebc0, {{382.8, 529.0}, {2.5, 34.0}}, label: '45 to 50', value: 1
+                                          StaticText, 0x118b4ed00, {{36.0, 567.0}, {191.7, 13.3}}, label: 'Distance per minute (relative height)'
+                                          StaticText, 0x118b4f200, {{36.0, 592.3}, {65.3, 13.3}}, label: 'Heart rate'
+                                          StaticText, 0x118b4f340, {{115.3, 592.3}, {117.3, 13.3}}, label: 'Distance per minute'
+                                        StaticText, 0x118b4de00, {{36.0, 661.7}, {344.0, 51.7}}, label: 'HR coverage is too sparse or starts too late. Zones need at least 50% of the session clock and 60 accepted samples.'
+                                        StaticText, 0x118b4e080, {{36.0, 769.3}, {347.0, 51.7}}, label: 'HR comparison unavailable — needs at least 70% coverage and regular samples. Readings above 200 bpm are excluded from coaching.'
+                                        StaticText, 0x118b4df40, {{36.0, 877.0}, {344.0, 33.7}}, label: 'Hard efforts unavailable — needs regular HR samples, at least 80% coverage, and gaps capped at 20 seconds.'
+                                        StaticText, 0x118b4fd40, {{20.0, 950.7}, {54.0, 24.0}}, label: 'Effort'
+                                        StaticText, 0x118b4fe80, {{20.0, 1256.7}, {164.3, 24.0}}, label: 'How to get better'
+                                        StaticText, 0x118b4f5c0, {{20.0, 1282.7}, {208.7, 15.7}}, label: 'What this session says to work on.'
+                                        StaticText, 0x118b4ee40, {{20.0, 1310.3}, {380.0, 100.0}}, label: 'KEEP IT UP · ENDURANCE, You held your pace, 93 m/min in the first half, 93 m/min in the second.'
+                                          Image, 0x118b4f0c0, {{36.0, 1326.3}, {38.0, 38.0}}, identifier: 'lungs.fill', label: 'lungs.fill'
+                                          StaticText, 0x118b4ef80, {{86.0, 1326.3}, {156.3, 13.3}}, label: 'KEEP IT UP · ENDURANCE'
+                                          StaticText, 0x118b4e1c0, {{86.0, 1342.7}, {150.7, 20.3}}, label: 'You held your pace'
+                                          StaticText, 0x118b4d400, {{36.0, 1376.3}, {339.3, 18.0}}, label: '93 m/min in the first half, 93 m/min in the second.'
+                                        StaticText, 0x118b4d540, {{20.0, 1434.3}, {186.7, 24.0}}, label: 'Explore this session'
+                                        Button, 0x118b4d680, {{20.0, 1470.3}, {380.0, 79.7}}, label: 'Heart rate, Trace, distribution, and coverage, 128–134 bpm'
+                                          Image, 0x118b4d7c0, {{34.0, 1493.3}, {34.0, 34.0}}, identifier: 'heart.fill', label: 'Love'
+                                          StaticText, 0x118b4d900, {{80.0, 1484.3}, {79.0, 20.3}}, label: 'Heart rate'
+                                          StaticText, 0x118b4da40, {{80.0, 1505.7}, {109.7, 30.3}}, label: 'Trace, distribution, and coverage'
+                                          StaticText, 0x118b4db80, {{275.7, 1502.3}, {89.0, 15.7}}, label: '128–134 bpm'
+                                          Image, 0x118db4000, {{379.0, 1505.0}, {6.3, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        Button, 0x118db4140, {{20.0, 1560.0}, {380.0, 63.7}}, label: 'Movement, Wrist-motion evidence on its own timeline'
+                                          Image, 0x118db4280, {{34.0, 1575.0}, {34.0, 34.0}}, identifier: 'waveform.path.ecg', label: 'waveform.path.ecg'
+                                          StaticText, 0x118db43c0, {{80.0, 1574.0}, {82.3, 20.3}}, label: 'Movement'
+                                          StaticText, 0x118db4500, {{80.0, 1595.3}, {237.0, 14.3}}, label: 'Wrist-motion evidence on its own timeline'
+                                          Image, 0x118db4640, {{379.0, 1586.7}, {6.3, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        Button, 0x118db4780, {{20.0, 1633.7}, {380.0, 63.7}}, label: 'Recording quality, Source, coverage, and gaps, Recorded'
+                                          Image, 0x118db48c0, {{34.0, 1648.7}, {34.0, 34.0}}, identifier: 'checkmark.seal', label: 'Verified', Selected
+                                          StaticText, 0x118db4a00, {{80.0, 1647.7}, {136.3, 20.3}}, label: 'Recording quality'
+                                          StaticText, 0x118db4b40, {{80.0, 1669.0}, {157.7, 14.3}}, label: 'Source, coverage, and gaps'
+                                          StaticText, 0x118db4c80, {{305.0, 1657.7}, {59.7, 15.7}}, label: 'Recorded'
+                                          Image, 0x118db4dc0, {{379.0, 1660.3}, {6.3, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        Button, 0x118db4f00, {{20.0, 1707.3}, {380.0, 63.7}}, label: 'Details, Energy, provenance, export, and deletion'
+                                          Image, 0x118db5040, {{34.0, 1722.3}, {34.0, 34.0}}, identifier: 'list.bullet', label: 'List'
+                                          StaticText, 0x118db5180, {{80.0, 1721.3}, {53.7, 20.3}}, label: 'Details'
+                                          StaticText, 0x118db52c0, {{80.0, 1742.7}, {231.7, 14.3}}, label: 'Energy, provenance, export, and deletion'
+                                          Image, 0x118db5400, {{379.0, 1734.0}, {6.3, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        Other, 0x118db5540, {{0.0, 0.0}, {0.0, 0.0}}
+                                      Other, 0x118db5680, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                                        Other, 0x118db57c0, {{414.0, 125.0}, {3.0, 340.3}}
+                                      Other, 0x118db5900, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                                        Other, 0x118db5a40, {{414.0, 125.0}, {3.0, 340.3}}
+                            Other, 0x118db5b80, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118db5cc0, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118db5e00, {{0.0, 829.0}, {420.0, 83.0}}
+                  Other, 0x118db5f40, {{0.0, 0.0}, {420.0, 912.0}}
+                    TabBar, 0x118db6080, {{0.0, 829.0}, {420.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x118db61c0, {{73.0, 829.0}, {274.0, 62.0}}
+                        Other, 0x118db6300, {{73.0, 829.0}, {94.0, 54.0}}
+                        Other, 0x118db6440, {{73.0, 829.0}, {274.0, 62.0}}
+                          Button, 0x118db6580, {{77.0, 833.0}, {94.0, 54.0}}, identifier: 'figure.run', label: 'Sessions', Selected
+                            Image, 0x118db66c0, {{112.0, 838.3}, {24.7, 29.3}}, identifier: 'figure.run', label: 'Running'
+                          Button, 0x118db6800, {{163.0, 833.0}, {94.0, 54.0}}, identifier: 'chart.bar.xaxis', label: 'Progress'
+                            Image, 0x118db6940, {{194.0, 840.3}, {31.7, 25.3}}, identifier: 'chart.bar.xaxis', label: 'chart.bar.xaxis'
+                          Button, 0x118db6a80, {{249.0, 833.0}, {94.0, 54.0}}, identifier: 'gearshape', label: 'Settings'
+                            Image, 0x118db6bc0, {{282.0, 839.0}, {28.0, 28.0}}, identifier: 'gearshape.fill', label: 'gearshape.fill'
+                        Other, 0x118db6d00, {{77.0, 833.0}, {94.0, 54.0}}
+                          Other, 0x118db6e40, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118db6f80, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118db70c0, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118db7200, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118db7340, {{77.0, 833.0}, {94.0, 54.0}}
+                                  Other, 0x118db7480, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118db75c0, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118db7700, {{77.0, 833.0}, {94.0, 54.0}}
+                  Other, 0x118db7840, {{0.0, 829.0}, {420.0, 83.0}}
+                    Other, 0x118db7980, {{0.0, 829.0}, {420.0, 83.0}}
+                      Other, 0x118db7ac0, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x118db7c00, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x118db7d40, {{0.0, 829.0}, {420.0, 83.0}}
+                            Other, 0x118db7e80, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x118da0000, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x118da0140, {{0.0, 829.0}, {420.0, 83.0}}
+Path to element:
+ →Application, 0x118d92d00, pid: 20285, label: 'Football Performance'
+Query chain:
+ →Find: Target Application 'com.prateekranka.footballperformance'
+  Output: {
+    Application, 0x118da0280, pid: 20285, label: 'Football Performance'
+  }

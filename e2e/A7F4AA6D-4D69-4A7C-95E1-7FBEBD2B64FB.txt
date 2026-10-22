@@ -1,0 +1,171 @@
+Attributes: Application, 0x1188da440, pid: 20285, label: 'Football Performance'
+Element subtree:
+ →Application, 0x1188da440, pid: 20285, label: 'Football Performance'
+    Window (Main), 0x1188d9f40, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x118d8b5c0, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x118d8b340, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x118c95b80, {{0.0, 0.0}, {420.0, 912.0}}
+          Other, 0x118c95a40, {{0.0, 0.0}, {420.0, 912.0}}
+            Other, 0x118d90000, {{0.0, 0.0}, {420.0, 912.0}}
+              Other, 0x118d90140, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118d90280, {{0.0, 0.0}, {420.0, 912.0}}
+                  Other, 0x118d903c0, {{0.0, 0.0}, {420.0, 912.0}}
+                    Other, 0x118d90500, {{0.0, 0.0}, {420.0, 912.0}}
+                      Other, 0x118d90640, {{0.0, 0.0}, {420.0, 912.0}}
+                        Other, 0x118d90780, {{0.0, 0.0}, {420.0, 912.0}}
+                          Other, 0x118d908c0, {{0.0, 0.0}, {420.0, 912.0}}
+                            NavigationBar, 0x118d90a00, {{0.0, 68.0}, {420.0, 54.0}}, identifier: 'Details'
+                              Button, 0x118d90b40, {{20.0, 68.0}, {44.0, 44.0}}, identifier: 'BackButton', label: 'Wed, Oct 21'
+                              StaticText, 0x118d90c80, {{182.3, 79.7}, {55.0, 20.7}}, label: 'Details'
+                            Other, 0x118d90dc0, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118d90f00, {{0.0, 0.0}, {420.0, 912.0}}
+                                Other, 0x118d91040, {{0.0, 0.0}, {420.0, 912.0}}
+                                  Other, 0x118d91180, {{0.0, 0.0}, {420.0, 912.0}}
+                                    ScrollView, 0x118d912c0, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x118d91400, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x118d91540, {{0.0, 0.0}, {420.0, 176.8}}
+                                        Other, 0x118d91680, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x118d917c0, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x118d91900, {{0.0, 122.0}, {420.0, 661.7}}
+                                        StaticText, 0x118d91a40, {{36.0, 142.0}, {109.0, 20.3}}, label: 'Active energy'
+                                        StaticText, 0x118d91b80, {{36.0, 170.3}, {79.3, 24.0}}, label: '420 kcal'
+                                        StaticText, 0x118d91cc0, {{36.0, 202.3}, {128.3, 14.3}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d91e00, {{36.0, 272.7}, {259.0, 20.3}}, label: 'Where each number comes from'
+                                        StaticText, 0x118d91f40, {{36.0, 301.0}, {348.0, 18.0}}, label: 'Distance, HealthKit final workout'
+                                          StaticText, 0x118d92080, {{36.0, 301.0}, {60.0, 18.0}}, label: 'Distance'
+                                          StaticText, 0x118d921c0, {{242.7, 303.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d92300, {{36.0, 327.0}, {348.0, 18.0}}, label: 'Average heart rate, HealthKit final workout'
+                                          StaticText, 0x118d92440, {{36.0, 327.0}, {126.3, 18.0}}, label: 'Average heart rate'
+                                          StaticText, 0x118d92580, {{242.7, 329.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d926c0, {{36.0, 353.0}, {348.0, 18.0}}, label: 'Duration, HealthKit final workout'
+                                          StaticText, 0x118d92800, {{36.0, 353.0}, {58.7, 18.0}}, label: 'Duration'
+                                          StaticText, 0x118d92940, {{242.7, 355.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d92a80, {{36.0, 379.0}, {348.0, 18.0}}, label: 'Motion capture, Foreground Core Motion fallback'
+                                          StaticText, 0x118d92bc0, {{36.0, 379.0}, {104.0, 18.0}}, label: 'Motion capture'
+                                          StaticText, 0x118d92d00, {{180.3, 381.0}, {203.7, 15.7}}, label: 'Foreground Core Motion fallback'
+                                        StaticText, 0x118d92e40, {{36.0, 453.0}, {67.7, 20.3}}, label: 'Package'
+                                        StaticText, 0x118d92f80, {{36.0, 481.3}, {348.0, 18.0}}, label: 'Stored size, 57 KB'
+                                          StaticText, 0x118d930c0, {{36.0, 481.3}, {77.0, 18.0}}, label: 'Stored size'
+                                          StaticText, 0x118d93200, {{347.3, 483.3}, {36.7, 15.7}}, label: '57 KB'
+                                        StaticText, 0x118d93340, {{36.0, 507.3}, {348.0, 18.0}}, label: 'Received, Oct 22, 2026 at 11:31 AM'
+                                          StaticText, 0x118d93480, {{36.0, 507.3}, {62.7, 18.0}}, label: 'Received'
+                                          StaticText, 0x118d935c0, {{230.0, 509.3}, {154.0, 15.7}}, label: 'Oct 22, 2026 at 11:31 AM'
+                                        StaticText, 0x118d93700, {{36.0, 533.3}, {348.0, 18.0}}, label: 'Session identifier, 7175f101'
+                                          StaticText, 0x118d93840, {{36.0, 533.3}, {118.0, 18.0}}, label: 'Session identifier'
+                                          StaticText, 0x118d93980, {{329.0, 535.3}, {55.0, 15.7}}, label: '7175f101'
+                                        Button, 0x118d93ac0, {{36.0, 607.3}, {201.0, 22.3}}, label: 'Share verified package'
+                                          Image, 0x118d93c00, {{38.0, 608.3}, {15.0, 20.0}}, identifier: 'square.and.arrow.up', label: 'Share'
+                                          StaticText, 0x118d93d40, {{36.0, 607.3}, {201.0, 22.3}}, label: 'Share verified package'
+                                        StaticText, 0x118d93e80, {{36.0, 641.7}, {334.3, 30.3}}, label: 'The export is the exact stored package, verified against its recorded digest.'
+                                        Button, 0x118b0c000, {{36.0, 696.3}, {174.3, 21.0}}, label: 'Delete iPhone copy'
+                                          Image, 0x118b0c140, {{37.3, 697.3}, {16.3, 18.7}}, identifier: 'trash', label: 'Trash'
+                                          StaticText, 0x118b0c280, {{36.0, 696.3}, {174.3, 21.0}}, label: 'Delete iPhone copy'
+                                        StaticText, 0x118b0c3c0, {{36.0, 729.3}, {313.7, 14.3}}, label: 'Deleting here never touches Health data or your Watch.'
+                                      Other, 0x118b0c500, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x118b0c640, {{414.0, 170.3}, {3.0, 655.7}}
+                                      Other, 0x118b0c780, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x118b0c8c0, {{414.0, 170.3}, {3.0, 655.7}}
+                            Other, 0x118b0ca00, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118b0cb40, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118b0cc80, {{0.0, 829.0}, {420.0, 83.0}}
+                  Other, 0x118b0cdc0, {{0.0, 0.0}, {420.0, 912.0}}
+                    TabBar, 0x118b0cf00, {{0.0, 829.0}, {420.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x118b0d040, {{73.0, 829.0}, {274.0, 62.0}}
+                        Other, 0x118b0d180, {{73.0, 829.0}, {94.0, 54.0}}
+                        Other, 0x118b0d2c0, {{73.0, 829.0}, {274.0, 62.0}}
+                          Button, 0x118b0d400, {{77.0, 833.0}, {94.0, 54.0}}, identifier: 'figure.run', label: 'Sessions', Selected
+                            Image, 0x118b0d540, {{112.0, 838.3}, {24.7, 29.3}}, identifier: 'figure.run', label: 'Running'
+                          Button, 0x118b0d680, {{163.0, 833.0}, {94.0, 54.0}}, identifier: 'chart.bar.xaxis', label: 'Progress'
+                            Image, 0x118b0d7c0, {{194.0, 840.3}, {31.7, 25.3}}, identifier: 'chart.bar.xaxis', label: 'chart.bar.xaxis'
+                          Button, 0x118b0d900, {{249.0, 833.0}, {94.0, 54.0}}, identifier: 'gearshape', label: 'Settings'
+                            Image, 0x118b0da40, {{282.0, 839.0}, {28.0, 28.0}}, identifier: 'gearshape.fill', label: 'gearshape.fill'
+                        Other, 0x118b0db80, {{77.0, 833.0}, {94.0, 54.0}}
+                          Other, 0x118b0dcc0, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118b0de00, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118b0df40, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118b0e080, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118b0e1c0, {{77.0, 833.0}, {94.0, 54.0}}
+                                  Other, 0x118b0e300, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118b0e440, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118b0e580, {{77.0, 833.0}, {94.0, 54.0}}
+                  Other, 0x118b0e6c0, {{0.0, 829.0}, {420.0, 83.0}}
+                    Other, 0x118b0e800, {{0.0, 829.0}, {420.0, 83.0}}
+                      Other, 0x118b0e940, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x118b0ea80, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x118b0ebc0, {{0.0, 829.0}, {420.0, 83.0}}
+                            Other, 0x118b0ed00, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x118b0ee40, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x118b0ef80, {{0.0, 829.0}, {420.0, 83.0}}
+      Other, 0x118b0f0c0, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x118b0f200, {{0.0, 0.0}, {420.0, 912.0}}, identifier: 'PopoverDismissRegion', label: 'dismiss popup'
+        Popover, 0x118b0f340, {{9.0, 529.0}, {402.0, 374.3}}
+          Image, 0x118b0f480, {{-141.0, 379.0}, {702.0, 674.3}}
+          Other, 0x118b0f5c0, {{9.0, 529.0}, {402.0, 374.3}}
+            Other, 0x118b0f700, {{9.0, 529.0}, {402.0, 374.3}}
+              Other, 0x118b0f840, {{9.0, 529.0}, {402.0, 374.3}}
+                Other, 0x118b0f980, {{9.0, 529.0}, {402.0, 374.3}}
+                  Other, 0x118b0fac0, {{9.0, 529.0}, {402.0, 374.3}}
+                    Other, 0x118b0fc00, {{9.0, 529.0}, {402.0, 374.3}}
+                      Other, 0x118b0fd40, {{9.0, 529.0}, {0.0, 0.0}}
+                        Other, 0x118b0fe80, {{9.0, 529.0}, {402.0, 374.3}}
+                          Other, 0x118da0000, {{9.0, 529.0}, {402.0, 374.3}}
+                            Other, 0x118da0140, {{9.0, 529.0}, {402.0, 374.3}}
+                              Other, 0x118da0280, {{9.0, 529.0}, {402.0, 374.3}}
+            Other, 0x118da03c0, {{9.0, 529.0}, {402.0, 374.3}}
+              Other, 0x118da0500, {{9.0, 529.0}, {402.0, 374.3}}, identifier: 'ActivityListView'
+                Other, 0x118da0640, {{9.0, 529.0}, {402.0, 374.3}}, identifier: 'ShareSheet.RemoteContainerView'
+                  Other, 0x118da0780, {{9.0, 529.0}, {402.0, 374.3}}
+                    Other, 0x118da08c0, {{9.0, 529.0}, {402.0, 374.3}}
+                      Other, 0x118da0a00, {{9.0, 529.0}, {402.0, 374.3}}
+                        Other, 0x118da0b40, {{9.0, 529.0}, {402.0, 374.3}}
+                          Other, 0x118da0c80, {{9.0, 529.0}, {402.0, 374.3}}
+                            Other, 0x118da0dc0, {{9.0, 529.0}, {402.0, 374.3}}
+                              Other, 0x118da0f00, {{9.0, 529.0}, {402.0, 374.3}}
+                                Other, 0x118da1040, {{9.0, 529.0}, {402.0, 374.3}}
+                                  NavigationBar, 0x118da1180, {{9.0, 529.0}, {402.0, 106.0}}, identifier: 'UIActivityContentView'
+                                    Image, 0x118da12c0, {{35.0, 555.0}, {64.0, 64.0}}
+                                    Other, 0x118da1400, {{114.0, 568.0}, {271.0, 18.0}}, identifier: 'LP.CaptionBar.TopCaption', label: '283e5134f72be5d5f0a81517bcdaa7e8b3c6e40fcd833ede8a78b4f79c7e4c47'
+                                    Other, 0x118da1540, {{114.0, 586.0}, {271.0, 20.0}}, identifier: 'LP.CaptionBar.BottomCaption', label: '57 KB'
+                                  Other, 0x118da1680, {{9.0, 529.0}, {402.0, 374.3}}
+                                    Other, 0x118da17c0, {{9.0, 529.0}, {402.0, 374.3}}
+                                      Other, 0x118da1900, {{9.0, 529.0}, {402.0, 374.3}}, identifier: 'shareSheet.activity.contentView'
+                                        CollectionView, 0x118da1a40, {{9.0, 529.0}, {402.0, 374.3}}, identifier: 'activityCollectionView'
+                                          Other, 0x118da1b80, {{9.0, 529.0}, {402.0, 374.3}}
+                                            Other, 0x118da1cc0, {{9.0, 529.0}, {402.0, 160.8}}
+                                          Other, 0x118da1e00, {{9.0, 529.0}, {402.0, 374.3}}
+                                          ScrollView, 0x118da1f40, {{30.3, 635.0}, {359.3, 126.0}}
+                                            Cell, 0x118da2080, {{30.3, 635.0}, {82.0, 125.3}}, identifier: 'shareCell', label: 'More'
+                                              Other, 0x118da21c0, {{30.3, 635.0}, {82.0, 125.3}}
+                                                Other, 0x118da2300, {{30.3, 730.0}, {82.0, 14.3}}
+                                                  StaticText, 0x118da2440, {{30.3, 730.0}, {82.0, 14.3}}, identifier: 'cellTitleLabel', label: 'More'
+                                                  StaticText, 0x118da2580, {{30.3, 730.0}, {32.7, 30.3}}, identifier: 'cellTitleLabel', label: 'Apple Inc'
+                                                  Other, 0x118da26c0, {{30.3, 730.0}, {82.0, 14.3}}
+                                                Image, 0x118da2800, {{36.0, 651.0}, {71.0, 71.0}}, identifier: 'activityImageView'
+                                          ScrollView, 0x118da2940, {{30.3, 762.0}, {359.3, 141.3}}
+                                            Cell, 0x118da2a80, {{30.3, 762.0}, {82.0, 141.3}}, identifier: 'actionGroupCell', label: 'Copy'
+                                              Other, 0x118da2bc0, {{30.3, 762.0}, {82.0, 141.3}}
+                                                Other, 0x118da2d00, {{30.3, 857.0}, {82.0, 14.3}}
+                                                  StaticText, 0x118da2e40, {{30.3, 857.0}, {82.0, 14.3}}, identifier: 'cellTitleLabel', label: 'Copy'
+                                                  StaticText, 0x118da2f80, {{30.3, 857.0}, {32.7, 30.3}}, identifier: 'cellTitleLabel', label: 'Apple Inc'
+                                                  Other, 0x118da30c0, {{30.3, 857.0}, {82.0, 14.3}}
+                                                Other, 0x118da3200, {{35.0, 778.0}, {73.0, 73.0}}
+                                                Image, 0x118da3340, {{55.3, 796.3}, {32.0, 36.7}}, identifier: 'activityImageView', label: 'copy'
+                                            Cell, 0x118da3480, {{123.0, 762.0}, {82.0, 141.3}}, identifier: 'actionGroupCell', label: 'Save to Files'
+                                              Other, 0x118da35c0, {{123.0, 762.0}, {82.0, 141.3}}
+                                                Other, 0x118da3700, {{123.0, 857.0}, {82.0, 14.3}}
+                                                  StaticText, 0x118da3840, {{123.0, 857.0}, {82.0, 14.3}}, identifier: 'cellTitleLabel', label: 'Save to Files'
+                                                  StaticText, 0x118da3980, {{123.0, 857.0}, {32.7, 30.3}}, identifier: 'cellTitleLabel', label: 'Apple Inc'
+                                                  Other, 0x118da3ac0, {{123.0, 857.0}, {82.0, 14.3}}
+                                                Other, 0x118da3c00, {{127.7, 778.0}, {73.0, 73.0}}
+                                                Image, 0x118da3d40, {{142.3, 793.0}, {43.3, 43.0}}, identifier: 'activityImageView'
+                                          Other, 0x118da3e80, {{35.0, 761.0}, {350.0, 1.0}}, identifier: 'collectionView.footerView'
+                                        Other, 0x118ce8000, {{35.0, 635.0}, {350.0, 1.0}}
+                                  Other, 0x118ce8140, {{9.0, 529.0}, {402.0, 374.3}}
+                                    Other, 0x118ce8280, {{9.0, 529.0}, {402.0, 374.3}}
+Path to element:
+ →Application, 0x1188da440, pid: 20285, label: 'Football Performance'
+Query chain:
+ →Find: Target Application 'com.prateekranka.footballperformance'
+  Output: {
+    Application, 0x118ce83c0, pid: 20285, label: 'Football Performance'
+  }

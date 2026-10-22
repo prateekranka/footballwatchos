@@ -1,0 +1,104 @@
+Attributes: Application, 0x118d8c640, pid: 20285, label: 'Football Performance'
+Element subtree:
+ →Application, 0x118d8c640, pid: 20285, label: 'Football Performance'
+    Window (Main), 0x118d8c780, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x118d8c500, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x118d8c3c0, {{0.0, 0.0}, {420.0, 912.0}}
+          Other, 0x118d8c280, {{0.0, 0.0}, {420.0, 912.0}}
+            Other, 0x118d8c140, {{0.0, 0.0}, {420.0, 912.0}}
+              Other, 0x118d8c000, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118d8cb40, {{0.0, 0.0}, {420.0, 912.0}}
+                  Other, 0x118d8cc80, {{0.0, 0.0}, {420.0, 912.0}}
+                    Other, 0x118d8cdc0, {{0.0, 0.0}, {420.0, 912.0}}
+                      Other, 0x118d8cf00, {{0.0, 0.0}, {420.0, 912.0}}
+                        Other, 0x118d8d040, {{0.0, 0.0}, {420.0, 912.0}}
+                          Other, 0x118d8d180, {{0.0, 0.0}, {420.0, 912.0}}
+                            NavigationBar, 0x118d8d2c0, {{0.0, 68.0}, {420.0, 54.0}}, identifier: 'Details'
+                              Button, 0x118d8d400, {{20.0, 68.0}, {44.0, 44.0}}, identifier: 'BackButton', label: 'Wed, Oct 21'
+                              StaticText, 0x118d8d680, {{182.3, 79.7}, {55.0, 20.7}}, label: 'Details'
+                            Other, 0x118d8d7c0, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118d8d900, {{0.0, 0.0}, {420.0, 912.0}}
+                                Other, 0x118d8da40, {{0.0, 0.0}, {420.0, 912.0}}
+                                  Other, 0x118d8db80, {{0.0, 0.0}, {420.0, 912.0}}
+                                    ScrollView, 0x118d8dcc0, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x118d8e300, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x118d8e440, {{0.0, 0.0}, {420.0, 176.8}}
+                                        Other, 0x118d8e580, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x118d8e6c0, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x118d8f5c0, {{0.0, 122.0}, {420.0, 661.7}}
+                                        StaticText, 0x118d8f700, {{36.0, 142.0}, {109.0, 20.3}}, label: 'Active energy'
+                                        StaticText, 0x118d8f840, {{36.0, 170.3}, {79.3, 24.0}}, label: '420 kcal'
+                                        StaticText, 0x118d8fe80, {{36.0, 202.3}, {128.3, 14.3}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d8f980, {{36.0, 272.7}, {259.0, 20.3}}, label: 'Where each number comes from'
+                                        StaticText, 0x118d8fd40, {{36.0, 301.0}, {348.0, 18.0}}, label: 'Distance, HealthKit final workout'
+                                          StaticText, 0x118d8fc00, {{36.0, 301.0}, {60.0, 18.0}}, label: 'Distance'
+                                          StaticText, 0x118d8fac0, {{242.7, 303.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d8ebc0, {{36.0, 327.0}, {348.0, 18.0}}, label: 'Average heart rate, HealthKit final workout'
+                                          StaticText, 0x118d8ed00, {{36.0, 327.0}, {126.3, 18.0}}, label: 'Average heart rate'
+                                          StaticText, 0x118d8ee40, {{242.7, 329.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d8f480, {{36.0, 353.0}, {348.0, 18.0}}, label: 'Duration, HealthKit final workout'
+                                          StaticText, 0x118d8ef80, {{36.0, 353.0}, {58.7, 18.0}}, label: 'Duration'
+                                          StaticText, 0x118d8f340, {{242.7, 355.0}, {141.3, 15.7}}, label: 'HealthKit final workout'
+                                        StaticText, 0x118d8f200, {{36.0, 379.0}, {348.0, 18.0}}, label: 'Motion capture, Foreground Core Motion fallback'
+                                          StaticText, 0x118d8f0c0, {{36.0, 379.0}, {104.0, 18.0}}, label: 'Motion capture'
+                                          StaticText, 0x118d8ea80, {{180.3, 381.0}, {203.7, 15.7}}, label: 'Foreground Core Motion fallback'
+                                        StaticText, 0x118d8e800, {{36.0, 453.0}, {67.7, 20.3}}, label: 'Package'
+                                        StaticText, 0x118d8e940, {{36.0, 481.3}, {348.0, 18.0}}, label: 'Stored size, 57 KB'
+                                          StaticText, 0x118d8de00, {{36.0, 481.3}, {77.0, 18.0}}, label: 'Stored size'
+                                          StaticText, 0x118d8e1c0, {{347.3, 483.3}, {36.7, 15.7}}, label: '57 KB'
+                                        StaticText, 0x118d8e080, {{36.0, 507.3}, {348.0, 18.0}}, label: 'Received, Oct 22, 2026 at 11:31 AM'
+                                          StaticText, 0x118d8df40, {{36.0, 507.3}, {62.7, 18.0}}, label: 'Received'
+                                          StaticText, 0x118d8d540, {{230.0, 509.3}, {154.0, 15.7}}, label: 'Oct 22, 2026 at 11:31 AM'
+                                        StaticText, 0x118c95b80, {{36.0, 533.3}, {348.0, 18.0}}, label: 'Session identifier, 7175f101'
+                                          StaticText, 0x118c95a40, {{36.0, 533.3}, {118.0, 18.0}}, label: 'Session identifier'
+                                          StaticText, 0x118d8b340, {{329.0, 535.3}, {55.0, 15.7}}, label: '7175f101'
+                                        Button, 0x118d8b5c0, {{36.0, 607.3}, {201.0, 22.3}}, label: 'Share verified package'
+                                          Image, 0x118d8a6c0, {{38.0, 608.3}, {15.0, 20.0}}, identifier: 'square.and.arrow.up', label: 'Share'
+                                          StaticText, 0x118d89e00, {{36.0, 607.3}, {201.0, 22.3}}, label: 'Share verified package'
+                                        StaticText, 0x118d8be80, {{36.0, 641.7}, {334.3, 30.3}}, label: 'The export is the exact stored package, verified against its recorded digest.'
+                                        Button, 0x118d897c0, {{36.0, 696.3}, {174.3, 21.0}}, label: 'Delete iPhone copy'
+                                          Image, 0x118d89680, {{37.3, 697.3}, {16.3, 18.7}}, identifier: 'trash', label: 'Trash'
+                                          StaticText, 0x118d8af80, {{36.0, 696.3}, {174.3, 21.0}}, label: 'Delete iPhone copy'
+                                        StaticText, 0x118d89f40, {{36.0, 729.3}, {313.7, 14.3}}, label: 'Deleting here never touches Health data or your Watch.'
+                                      Other, 0x118d8a080, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x118d8ad00, {{414.0, 170.3}, {3.0, 655.7}}
+                                      Other, 0x118d8a1c0, {{387.0, 122.0}, {30.0, 707.0}}, label: 'Vertical scroll bar, 1 page', value: 0%
+                                        Other, 0x118d8a300, {{414.0, 170.3}, {3.0, 655.7}}
+                            Other, 0x118d8a940, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x118d8a800, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x118d8a440, {{0.0, 829.0}, {420.0, 83.0}}
+                  Other, 0x118d8aa80, {{0.0, 0.0}, {420.0, 912.0}}
+                    TabBar, 0x118d8a580, {{0.0, 829.0}, {420.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x118d8b980, {{73.0, 829.0}, {274.0, 62.0}}
+                        Other, 0x118d8bac0, {{73.0, 829.0}, {94.0, 54.0}}
+                        Other, 0x118d8bd40, {{73.0, 829.0}, {274.0, 62.0}}
+                          Button, 0x118d8abc0, {{77.0, 833.0}, {94.0, 54.0}}, identifier: 'figure.run', label: 'Sessions', Selected
+                            Image, 0x118d89900, {{112.0, 838.3}, {24.7, 29.3}}, identifier: 'figure.run', label: 'Running'
+                          Button, 0x118d89cc0, {{163.0, 833.0}, {94.0, 54.0}}, identifier: 'chart.bar.xaxis', label: 'Progress'
+                            Image, 0x118d89a40, {{194.0, 840.3}, {31.7, 25.3}}, identifier: 'chart.bar.xaxis', label: 'chart.bar.xaxis'
+                          Button, 0x118d89b80, {{249.0, 833.0}, {94.0, 54.0}}, identifier: 'gearshape', label: 'Settings'
+                            Image, 0x118d8bc00, {{282.0, 839.0}, {28.0, 28.0}}, identifier: 'gearshape.fill', label: 'gearshape.fill'
+                        Other, 0x118d8b700, {{77.0, 833.0}, {94.0, 54.0}}
+                          Other, 0x118d8b840, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118d89540, {{77.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x118d8b480, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118a18500, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118a18140, {{77.0, 833.0}, {94.0, 54.0}}
+                                  Other, 0x118a192c0, {{77.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x118a18000, {{77.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x118a18280, {{77.0, 833.0}, {94.0, 54.0}}
+                  Other, 0x118a18780, {{0.0, 829.0}, {420.0, 83.0}}
+                    Other, 0x118a18640, {{0.0, 829.0}, {420.0, 83.0}}
+                      Other, 0x118a183c0, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x1188da440, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x1188d9f40, {{0.0, 829.0}, {420.0, 83.0}}
+                            Other, 0x1188da6c0, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x1188da580, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x1188daa80, {{0.0, 829.0}, {420.0, 83.0}}
+Path to element:
+ →Application, 0x118d8c640, pid: 20285, label: 'Football Performance'
+Query chain:
+ →Find: Target Application 'com.prateekranka.footballperformance'
+  Output: {
+    Application, 0x1188da800, pid: 20285, label: 'Football Performance'
+  }
