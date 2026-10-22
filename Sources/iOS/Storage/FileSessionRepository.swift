@@ -217,6 +217,7 @@ public actor FileSessionRepository {
     private let tombstonesURL: URL
     private var index: Index
     private var tombstones: TombstoneStore
+    private var hasReconciled = false
 
     public init(
         configuration: Configuration? = nil,
@@ -409,6 +410,14 @@ public actor FileSessionRepository {
         sorted(index.entries)
     }
 
+    /// Sessions the Watch need not send again: held here, or deleted here on
+    /// purpose. Nil until startup reconcile has loaded the index, because an
+    /// empty list would tell the Watch to resend everything.
+    public func knownSessionIDs() -> Set<UUID>? {
+        guard hasReconciled else { return nil }
+        return Set(index.entries.map(\.sessionID)).union(tombstones.entries.map(\.sessionID))
+    }
+
     /// Rebuilds the index, recovers an interrupted promote, and processes
     /// retained incoming staging directories. Call once as the application
     /// starts, before presenting the library as current.
@@ -416,6 +425,7 @@ public actor FileSessionRepository {
         tombstones = try loadTombstones()
         try rebuildIndexFromPackages()
         try reconcileIncomingStaging()
+        hasReconciled = true
     }
 
     public func detail(for sessionID: UUID) throws -> SessionDetail {

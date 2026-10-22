@@ -281,6 +281,40 @@ public enum PlayerProfileContextV1 {
     }
 }
 
+/// The sessions the iPhone holds or deleted on purpose, sent to the Watch.
+/// A receipt only proves an import into the iPhone library of that time; if
+/// the iPhone app is reinstalled its library starts empty, and without this
+/// list the Watch would never send those sessions again.
+public struct PhoneLibraryContextV1: Sendable, Equatable {
+    public static let knownSessionIDsKey = "phoneKnownSessionIDs"
+    public static let generatedAtKey = "phoneLibraryGeneratedAt"
+
+    public let knownSessionIDs: Set<UUID>
+    /// iPhone clock, like receipt times, so the Watch can tell which is newer.
+    public let generatedAt: Date
+
+    public init(knownSessionIDs: Set<UUID>, generatedAt: Date) {
+        self.knownSessionIDs = knownSessionIDs
+        self.generatedAt = generatedAt
+    }
+
+    public var contextEntries: [String: Any] {
+        [
+            Self.knownSessionIDsKey: knownSessionIDs.map(\.uuidString).sorted(),
+            Self.generatedAtKey: generatedAt.timeIntervalSince1970,
+        ]
+    }
+
+    public static func decode(context: [String: Any]) -> PhoneLibraryContextV1? {
+        guard let strings = context[knownSessionIDsKey] as? [String],
+              let seconds = context[generatedAtKey] as? Double else { return nil }
+        return PhoneLibraryContextV1(
+            knownSessionIDs: Set(strings.compactMap(UUID.init(uuidString:))),
+            generatedAt: Date(timeIntervalSince1970: seconds)
+        )
+    }
+}
+
 /// The Watch's own count of its saved sessions and how far each got toward
 /// the iPhone. The iPhone cannot see transfers until a file lands, so without
 /// this it can only guess at what is still on the Watch.

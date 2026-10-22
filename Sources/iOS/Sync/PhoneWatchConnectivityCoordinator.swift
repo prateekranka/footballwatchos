@@ -62,21 +62,46 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     }
 
     @objc private func playerProfileMayHaveChanged() {
-        sendPlayerProfile()
+        sendContext()
     }
 
     /// Application context keeps only the latest value and reaches the Watch
-    /// the next time it runs, so an age change made while the Watch is away
-    /// still arrives.
-    private func sendPlayerProfile() {
+    /// the next time it runs, so an age change or a library change made while
+    /// the Watch is away still arrives. Each update replaces the whole
+    /// dictionary, so every key is sent every time.
+    private func sendContext() {
         guard session.activationState == .activated,
               session.isPaired,
               session.isWatchAppInstalled else { return }
+        let repository = repository
+        Task { [weak self, repository] in
+            let known = await repository.knownSessionIDs()
+            self?.updateContext(knownSessionIDs: known)
+        }
+    }
+
+    private func updateContext(knownSessionIDs: Set<UUID>?) {
         let age = UserDefaults.standard.integer(forKey: "playerAge")
         let maximum = age > 0 ? PerformanceCoachV1.heartRateMax(age: age, observedPeak: nil) : 0
-        let key = PlayerProfileContextV1.maximumHeartRateKey
-        guard session.applicationContext[key] as? Double != maximum else { return }
-        try? session.updateApplicationContext([key: maximum])
+        var context: [String: Any] = [PlayerProfileContextV1.maximumHeartRateKey: maximum]
+
+        let previous = PhoneLibraryContextV1.decode(context: session.applicationContext)
+        if let knownSessionIDs {
+            // A new time only when the list changed: the Watch resends any
+            // session whose receipt is older than this time.
+            let library: PhoneLibraryContextV1
+            if let previous, previous.knownSessionIDs == knownSessionIDs {
+                library = previous
+            } else {
+                library = PhoneLibraryContextV1(knownSessionIDs: knownSessionIDs, generatedAt: Date())
+            }
+            context.merge(library.contextEntries) { _, new in new }
+        } else if let previous {
+            context.merge(previous.contextEntries) { _, new in new }
+        }
+
+        guard !NSDictionary(dictionary: session.applicationContext).isEqual(to: context) else { return }
+        try? session.updateApplicationContext(context)
     }
 
     func session(
@@ -88,7 +113,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         // descriptive value is intentionally local diagnostic information.
         _ = error.map { String(describing: $0) }
         requeueDurableReceipts()
-        sendPlayerProfile()
+        sendContext()
         storeWatchStatus(from: session.receivedApplicationContext)
     }
 
@@ -104,7 +129,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     }
 
     func sessionWatchStateDidChange(_ session: WCSession) {
-        sendPlayerProfile()
+        sendContext()
     }
 
     func session(_ session: WCSession, didReceive file: WCSessionFile) {
@@ -190,6 +215,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
                 }
                 Task { await outbox.retryAll() }
                 self?.requeueDurableReceipts()
+                self?.sendContext()
             } catch {
                 let failureDescription = String(describing: error)
                 NSLog("FootballPerformance could not reconcile iPhone packages: %@", failureDescription)
@@ -207,6 +233,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
             self?.queueReceipt(payload)
             if case let .imported(record, _) = outcome {
                 NotificationCenter.default.post(name: Self.sessionImportedNotification, object: nil)
+                self?.sendContext()
                 await outbox.enqueue(sessionID: record.sessionID, repository: repository)
                 Task { await outbox.pushOne() }
             }

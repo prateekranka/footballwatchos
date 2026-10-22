@@ -225,9 +225,27 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         }
     }
 
+    private func applyPhoneLibrary(_ library: PhoneLibraryContextV1) async {
+        guard let outbox else { return }
+        do {
+            guard try await outbox.reconcile(withPhoneLibrary: library) else { return }
+            WatchLog.recorder.info("phoneLibrary: outbox changed to match \(library.knownSessionIDs.count, privacy: .public) iPhone sessions")
+            await refreshCachedStateNow()
+            submitClaimedRecordsIfEligible()
+        } catch {
+            outboxFailure = error.localizedDescription
+            stateGeneration &+= 1
+        }
+    }
+
     private func activatedOrUpdated() {
         if let session {
             Self.storePlayerProfile(session.receivedApplicationContext)
+            if let library = PhoneLibraryContextV1.decode(context: session.receivedApplicationContext) {
+                Task { @MainActor [weak self] in
+                    await self?.applyPhoneLibrary(library)
+                }
+            }
         }
         publishPendingStatusIfEligible()
         reconcileOutstandingTransfers()
@@ -420,6 +438,10 @@ extension WatchSyncCoordinator: WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         Self.storePlayerProfile(applicationContext)
+        guard let library = PhoneLibraryContextV1.decode(context: applicationContext) else { return }
+        Task { @MainActor [weak self] in
+            await self?.applyPhoneLibrary(library)
+        }
     }
 
     /// Zero clears the stored value, so removing the age on the iPhone

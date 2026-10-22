@@ -180,6 +180,36 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         }
     }
 
+    /// The iPhone's own list outranks old receipts. A session it holds (as
+    /// any copy) needs no more sends: a second copy would only be rejected.
+    /// A session it lacks, whose receipt is older than the list, was lost
+    /// with an earlier iPhone library and must be sent again.
+    @discardableResult
+    mutating func reconcile(withPhoneLibrary library: PhoneLibraryContextV1, now: Date) -> Bool {
+        var changed = false
+        for record in records.values {
+            if library.knownSessionIDs.contains(record.key.sessionID) {
+                guard record.status != .imported else { continue }
+                mutate(record.key, now: now) {
+                    $0.status = .imported
+                    $0.lastError = nil
+                    $0.importedAt = library.generatedAt
+                }
+                changed = true
+            } else if record.status == .imported,
+                      (record.importedAt ?? .distantPast) < library.generatedAt {
+                mutate(record.key, now: now) {
+                    $0.status = .pending
+                    $0.attemptCount = 0
+                    $0.importedAt = nil
+                    $0.lastError = "The iPhone no longer has this session; resend is pending."
+                }
+                changed = true
+            }
+        }
+        return changed
+    }
+
     /// An outstanding transfer is retained as queued. If it disappeared before
     /// this process observed its completion callback, retry on a later
     /// activation rather than fabricating an imported state.
@@ -332,6 +362,14 @@ actor WatchTransferOutbox {
         if state != before {
             try persist()
         }
+    }
+
+    func reconcile(withPhoneLibrary library: PhoneLibraryContextV1, now: Date = Date()) throws -> Bool {
+        let changed = state.reconcile(withPhoneLibrary: library, now: now)
+        if changed {
+            try persist()
+        }
+        return changed
     }
 
     func packageURL(for record: WatchTransferOutboxRecordV1) -> URL {
