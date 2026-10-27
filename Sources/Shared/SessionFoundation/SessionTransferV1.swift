@@ -285,7 +285,7 @@ public enum PlayerProfileContextV1 {
 /// A receipt only proves an import into the iPhone library of that time; if
 /// the iPhone app is reinstalled its library starts empty, and without this
 /// list the Watch would never send those sessions again.
-public struct PhoneLibraryContextV1: Sendable, Equatable {
+public struct PhoneLibraryContextV1: Codable, Sendable, Equatable {
     public static let knownSessionIDsKey = "phoneKnownSessionIDs"
     public static let generatedAtKey = "phoneLibraryGeneratedAt"
 
@@ -307,9 +307,12 @@ public struct PhoneLibraryContextV1: Sendable, Equatable {
 
     public static func decode(context: [String: Any]) -> PhoneLibraryContextV1? {
         guard let strings = context[knownSessionIDsKey] as? [String],
-              let seconds = context[generatedAtKey] as? Double else { return nil }
+              let seconds = context[generatedAtKey] as? Double,
+              seconds.isFinite else { return nil }
+        let sessionIDs = strings.compactMap(UUID.init(uuidString:))
+        guard sessionIDs.count == strings.count else { return nil }
         return PhoneLibraryContextV1(
-            knownSessionIDs: Set(strings.compactMap(UUID.init(uuidString:))),
+            knownSessionIDs: Set(sessionIDs),
             generatedAt: Date(timeIntervalSince1970: seconds)
         )
     }
@@ -331,6 +334,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
     public let failed: Int
     /// Interrupted recordings that need Recover on the Watch first.
     public let needsRecovery: Int
+    public let notRequestedByPhone: Int?
     public let updatedAt: Date
 
     public init(
@@ -339,7 +343,8 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
         waiting: Int,
         failed: Int,
         needsRecovery: Int,
-        updatedAt: Date
+        updatedAt: Date,
+        notRequestedByPhone: Int? = nil
     ) {
         self.savedOnWatch = savedOnWatch
         self.onIPhone = onIPhone
@@ -347,6 +352,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
         self.failed = failed
         self.needsRecovery = needsRecovery
         self.updatedAt = updatedAt
+        self.notRequestedByPhone = notRequestedByPhone
     }
 
     /// Same counts, ignoring when they were taken.
@@ -354,6 +360,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
         savedOnWatch == other.savedOnWatch && onIPhone == other.onIPhone
             && waiting == other.waiting && failed == other.failed
             && needsRecovery == other.needsRecovery
+            && (notRequestedByPhone ?? 0) == (other.notRequestedByPhone ?? 0)
     }
 
     public func encoded() throws -> Data {

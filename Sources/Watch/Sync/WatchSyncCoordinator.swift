@@ -6,6 +6,7 @@ enum WatchSyncPresentation: Equatable, Sendable {
     case waitingForIPhone
     case importedOnIPhone
     case needsAttention
+    case notRequestedByPhone
 
     var title: String {
         switch self {
@@ -15,6 +16,8 @@ enum WatchSyncPresentation: Equatable, Sendable {
             return "Imported on iPhone"
         case .needsAttention:
             return "Sync needs attention"
+        case .notRequestedByPhone:
+            return "Kept on Watch"
         }
     }
 }
@@ -159,6 +162,8 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
             return .importedOnIPhone
         case .retryableFailure:
             return .needsAttention
+        case .notRequestedByPhone:
+            return .notRequestedByPhone
         }
     }
 
@@ -317,6 +322,9 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
 
         Task { [weak self] in
             do {
+                if let library = PhoneLibraryContextV1.decode(context: session.receivedApplicationContext) {
+                    _ = try await outbox.reconcile(withPhoneLibrary: library)
+                }
                 let records = try await outbox.claimRecordsForTransfer()
                 await self?.refreshCachedStateNow()
 
@@ -330,6 +338,7 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
                             createdAt: record.createdAt
                         )
                         let metadata = try SessionTransferCodecV1.encodeTransferEnvelope(envelope)
+                        guard await outbox.snapshot().record(for: record.key)?.status == .queued else { continue }
                         _ = await MainActor.run {
                             session.transferFile(
                                 packageURL,

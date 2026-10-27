@@ -329,6 +329,13 @@ private struct RecoveryStatusView: View {
                             value: "\(aggregate.importedCount)",
                             emphasized: false
                         )
+                        if aggregate.notRequestedByPhoneCount > 0 {
+                            statusRow(
+                                "No resend needed",
+                                value: "\(aggregate.notRequestedByPhoneCount)",
+                                emphasized: false
+                            )
+                        }
                         statusRow(
                             "Needs attention",
                             value: "\(aggregate.needsAttentionCount)",
@@ -343,7 +350,7 @@ private struct RecoveryStatusView: View {
                                 total: Double(aggregate.sourceSessionCount),
                                 label: "Recovered \(aggregate.recoveredCount) of \(aggregate.sourceSessionCount)"
                             )
-                        } else {
+                        } else if aggregate.notRequestedByPhoneCount == 0 {
                             let transferTotal = Double(max(aggregate.recoveredCount, 1))
                             recoveryProgress(
                                 progress: Double(aggregate.importedCount),
@@ -363,6 +370,12 @@ private struct RecoveryStatusView: View {
                             .foregroundStyle(WatchTheme.accent)
                             .multilineTextAlignment(.center)
                             .accessibilityHint("Every recovered session has an iPhone receipt")
+                    }
+                    if aggregate.notRequestedByPhoneCount > 0 {
+                        Text("The iPhone already knows these sessions or you deleted its copies. Their files stay on this Watch.")
+                            .font(.footnote)
+                            .foregroundStyle(WatchTheme.muted)
+                            .multilineTextAlignment(.center)
                     }
                 } else {
                     ProgressView("Checking…")
@@ -1102,6 +1115,8 @@ private struct SavedSessionView: View {
             return "checkmark.icloud.fill"
         case .needsAttention:
             return "exclamationmark.triangle.fill"
+        case .notRequestedByPhone:
+            return "applewatch"
         }
     }
 
@@ -1113,6 +1128,8 @@ private struct SavedSessionView: View {
             return WatchTheme.accent
         case .needsAttention:
             return WatchTheme.warning
+        case .notRequestedByPhone:
+            return WatchTheme.muted
         }
     }
 }

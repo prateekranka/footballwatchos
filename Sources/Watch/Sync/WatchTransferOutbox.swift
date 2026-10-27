@@ -30,6 +30,7 @@ enum WatchTransferOutboxStatusV1: String, Codable, Sendable, Equatable {
     case retryableFailure
     /// A matching, decoded receipt was durably recorded.
     case imported
+    case notRequestedByPhone
 }
 
 struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
@@ -44,6 +45,7 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
     var lastError: String?
     var lastUpdatedAt: Date
     var importedAt: Date?
+    var receipt: SyncReceiptV1?
 
     init(
         transferEnvelope: SessionTransferEnvelopeV1,
@@ -62,6 +64,7 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
         self.lastError = nil
         self.lastUpdatedAt = now
         self.importedAt = nil
+        self.receipt = nil
     }
 }
 
@@ -74,6 +77,7 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
 
     let formatVersion: Int
     var records: [String: WatchTransferOutboxRecordV1]
+    private(set) var phoneLibrary: PhoneLibraryContextV1?
 
     init(records: [String: WatchTransferOutboxRecordV1] = [:]) {
         self.formatVersion = Self.formatVersion
@@ -143,7 +147,9 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         errorDescription: String?,
         now: Date
     ) {
-        guard records[key.storageKey]?.status != .imported else { return }
+        guard let current = records[key.storageKey],
+              current.status != .imported,
+              current.status != .notRequestedByPhone else { return }
         mutate(key, now: now) { record in
             if let errorDescription {
                 record.status = .retryableFailure
@@ -180,28 +186,34 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         }
     }
 
-    /// The iPhone's own list outranks old receipts. A session it holds (as
-    /// any copy) needs no more sends: a second copy would only be rejected.
-    /// A session it lacks, whose receipt is older than the list, was lost
-    /// with an earlier iPhone library and must be sent again.
     @discardableResult
     mutating func reconcile(withPhoneLibrary library: PhoneLibraryContextV1, now: Date) -> Bool {
-        var changed = false
+        guard library.generatedAt.timeIntervalSince1970.isFinite else { return false }
+        if let phoneLibrary {
+            guard library.generatedAt >= phoneLibrary.generatedAt else { return false }
+            guard library.generatedAt != phoneLibrary.generatedAt || library == phoneLibrary else { return false }
+        }
+        var changed = phoneLibrary != library
+        phoneLibrary = library
         for record in records.values {
             if library.knownSessionIDs.contains(record.key.sessionID) {
-                guard record.status != .imported else { continue }
+                guard record.status != .imported,
+                      record.status != .notRequestedByPhone else { continue }
                 mutate(record.key, now: now) {
-                    $0.status = .imported
+                    $0.status = .notRequestedByPhone
                     $0.lastError = nil
-                    $0.importedAt = library.generatedAt
+                    $0.importedAt = nil
+                    $0.receipt = nil
                 }
                 changed = true
-            } else if record.status == .imported,
-                      (record.importedAt ?? .distantPast) < library.generatedAt {
+            } else if record.status == .notRequestedByPhone
+                        || (record.status == .imported
+                            && (record.importedAt ?? .distantPast) < library.generatedAt) {
                 mutate(record.key, now: now) {
                     $0.status = .pending
                     $0.attemptCount = 0
                     $0.importedAt = nil
+                    $0.receipt = nil
                     $0.lastError = "The iPhone no longer has this session; resend is pending."
                 }
                 changed = true
@@ -234,11 +246,15 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
             packageDigest: receipt.packageDigest
         )
         guard records[key.storageKey] != nil else { return false }
+        if let phoneLibrary,
+           !phoneLibrary.knownSessionIDs.contains(receipt.sessionID),
+           receipt.acknowledgedAt < phoneLibrary.generatedAt { return false }
 
         mutate(key, now: now) { record in
             record.status = .imported
             record.lastError = nil
             record.importedAt = receipt.acknowledgedAt
+            record.receipt = receipt
         }
         return true
     }
@@ -301,12 +317,27 @@ actor WatchTransferOutbox {
         try? (self.outboxDirectory as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
 
         if fileManager.fileExists(atPath: stateURL.path) {
-            let decoded = try JSONDecoder().decode(
+            var decoded = try JSONDecoder().decode(
                 WatchTransferOutboxStateV1.self,
                 from: Data(contentsOf: stateURL)
             )
             guard decoded.formatVersion == WatchTransferOutboxStateV1.formatVersion else {
                 throw WatchTransferOutboxErrorV1.unsupportedStateFormat(decoded.formatVersion)
+            }
+            var didMigrate = false
+            for (key, var record) in decoded.records where record.status == .imported
+                && (record.receipt?.sessionID != record.key.sessionID
+                    || record.receipt?.packageDigest != record.key.packageDigest) {
+                record.status = .pending
+                record.attemptCount = 0
+                record.importedAt = nil
+                record.receipt = nil
+                record.lastError = nil
+                decoded.records[key] = record
+                didMigrate = true
+            }
+            if didMigrate {
+                try JSONEncoder().encode(decoded).write(to: stateURL, options: .atomic)
             }
             self.state = decoded
         } else {
@@ -335,8 +366,11 @@ actor WatchTransferOutbox {
             packageFilename: filename,
             now: now
         )
+        if let library = state.phoneLibrary {
+            state.reconcile(withPhoneLibrary: library, now: now)
+        }
         try persist()
-        return record
+        return state.record(for: record.key) ?? record
     }
 
     /// Claims only records which are safe to hand to the framework once. The

@@ -30,6 +30,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     private let sessionPushOutbox: SessionPushOutbox
     private let configuration: FileSessionRepository.Configuration
     private let session: WCSession
+    @MainActor private var contextGeneration: UInt64 = 0
 
     init(
         repository: FileSessionRepository,
@@ -73,14 +74,21 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         guard session.activationState == .activated,
               session.isPaired,
               session.isWatchAppInstalled else { return }
-        let repository = repository
-        Task { [weak self, repository] in
-            let known = await repository.knownSessionIDs()
-            self?.updateContext(knownSessionIDs: known)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.contextGeneration &+= 1
+            let generation = self.contextGeneration
+            let known = await self.repository.knownSessionIDs()
+            guard self.contextGeneration == generation else { return }
+            self.updateContext(knownSessionIDs: known)
         }
     }
 
+    @MainActor
     private func updateContext(knownSessionIDs: Set<UUID>?) {
+        guard session.activationState == .activated,
+              session.isPaired,
+              session.isWatchAppInstalled else { return }
         let age = UserDefaults.standard.integer(forKey: "playerAge")
         let maximum = age > 0 ? PerformanceCoachV1.heartRateMax(age: age, observedPeak: nil) : 0
         var context: [String: Any] = [PlayerProfileContextV1.maximumHeartRateKey: maximum]

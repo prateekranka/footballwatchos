@@ -191,6 +191,9 @@ struct SessionSyncSheet: View {
                         if let status = model.watchStatus {
                             row("Saved on your Watch", value: "\(status.savedOnWatch)")
                             row("Still to send", value: "\(status.waiting)")
+                            if let count = status.notRequestedByPhone, count > 0 {
+                                row("No resend needed", value: "\(count)")
+                            }
                             if status.failed > 0 {
                                 row("Did not send", value: "\(status.failed)")
                             }
@@ -440,8 +443,13 @@ struct WatchTransferSummary: Equatable {
             isWarning = true
             return
         }
-        headline = status.savedOnWatch == 0 ? "No sessions on your Watch" : "All Watch sessions are here"
-        explanation = "Your Watch has nothing left to send."
+        if (status.notRequestedByPhone ?? 0) > 0 {
+            headline = "No more Watch sessions to send"
+            explanation = "The iPhone already knows some sessions or you deleted its copies. Their files stay on your Watch."
+        } else {
+            headline = status.savedOnWatch == 0 ? "No sessions on your Watch" : "All Watch sessions are here"
+            explanation = "Your Watch has nothing left to send."
+        }
         symbolName = "checkmark.circle.fill"
         isWarning = false
     }
