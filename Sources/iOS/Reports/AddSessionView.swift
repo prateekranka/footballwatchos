@@ -15,21 +15,6 @@ struct AddSessionView: View {
         NavigationStack {
             Form {
                 Section {
-                    HStack(alignment: .top, spacing: 12) {
-                        IconBadge(systemName: sessionType.symbolName, tint: PerformanceTheme.accent, size: 44)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Manual session")
-                                .font(.headline)
-                            Text("Log a session you played. Your watch records sensor readings; a manual log stores only the details you enter.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section("Session details") {
                     Picker("Session type", selection: $sessionType) {
                         ForEach(FootballSessionTypeV1.allCases) { type in
                             Text(type.title).tag(type)
@@ -39,11 +24,11 @@ struct AddSessionView: View {
                     Group {
                         if textSize.isAccessibilitySize {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Duration (minutes)")
+                                Text("Duration")
                                 durationInput
                             }
                         } else {
-                            LabeledContent("Duration (minutes)") { durationInput }
+                            LabeledContent("Duration") { durationInput }
                         }
                     }
                     .contentShape(Rectangle())
@@ -59,12 +44,6 @@ struct AddSessionView: View {
                             .foregroundStyle(PerformanceTheme.warning)
                             .accessibilityIdentifier("session-validation")
                     }
-                }
-
-                Section {
-                    Text("No heart rate, distance, energy, or motion is added. Manual logs stay on this iPhone and do not count toward your personal baseline.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Add session")
@@ -117,14 +96,20 @@ struct AddSessionView: View {
         }
     }
 
+    /// The unit sits beside the number, so the row label needs no "(minutes)".
     private var durationInput: some View {
-        TextField("Minutes", text: $durationText)
-            .keyboardType(.numberPad)
-            .multilineTextAlignment(.trailing)
-            .focused($durationFocused)
-            .accessibilityLabel("Duration in minutes")
-            .accessibilityIdentifier("session-duration")
-            .frame(minWidth: 64)
+        HStack(spacing: 4) {
+            TextField("Minutes", text: $durationText)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .focused($durationFocused)
+                .accessibilityLabel("Duration in minutes")
+                .accessibilityIdentifier("session-duration")
+                .frame(minWidth: 64)
+            Text("min")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+        }
     }
 
     private func save() {

@@ -22,7 +22,7 @@ struct ProgressHomeView: View {
                     improveSection
                 }
 
-                SectionHeader(title: "Trends", caption: "One measure at a time, against your own history.")
+                SectionHeader(title: "Trends")
                 selectors
 
                 if trendSessions.isEmpty {
@@ -51,21 +51,10 @@ struct ProgressHomeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("GET BETTER")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(PerformanceTheme.accent)
-                .tracking(0.8)
-                .accessibilityHidden(true)
-
-            Text("Progress")
-                .font(PerformanceTheme.screenTitle)
-                .foregroundStyle(PerformanceTheme.primaryText)
-
-            Text("Your load, your trends, and what to work on next.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        Text("Progress")
+            .font(PerformanceTheme.screenTitle)
+            .foregroundStyle(PerformanceTheme.primaryText)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var snapshot: PerformanceCoachV1.TrainingSnapshot {
@@ -75,7 +64,7 @@ struct ProgressHomeView: View {
     private var loadSection: some View {
         let snapshot = self.snapshot
         return VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Training load", caption: "Minutes played per week")
+            SectionHeader(title: "Training load")
             VStack(alignment: .leading, spacing: 14) {
                 WeeklyLoadChart(weeks: snapshot.weeks)
                     .frame(height: 140)
@@ -106,7 +95,7 @@ struct ProgressHomeView: View {
     private var improveSection: some View {
         let tips = PerformanceCoachV1.tips(records: model.sessions, snapshot: snapshot)
         return VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "How to get better", caption: "Built from your sessions, with a drill for each.")
+            SectionHeader(title: "How to get better")
             ForEach(tips.prefix(2)) { tip in
                 CoachTipCard(tip: tip)
             }
@@ -185,50 +174,37 @@ struct ProgressHomeView: View {
     private var baselineCard: some View {
         switch baselineStatus {
         case .established(let value, let count):
-            VStack(alignment: .leading, spacing: 6) {
-                AdaptiveMetricGroup {
-                    Text("Your recent baseline")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(PerformanceTheme.primaryText)
-                    if !textSize.isAccessibilitySize { Spacer() }
-                    Text(measure.formatted(value))
-                        .font(.subheadline.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(PerformanceTheme.accent)
-                }
-                Text("Built from your \(count) most recent valid sessions before the latest one.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            AdaptiveMetricGroup {
+                Text("Baseline · last \(count) sessions")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PerformanceTheme.primaryText)
+                if !textSize.isAccessibilitySize { Spacer() }
+                Text(measure.formatted(value))
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(PerformanceTheme.accent)
             }
             .performanceCard(padding: 14)
 
         case .building(let validCount, let required):
-            VStack(alignment: .leading, spacing: 6) {
-                Label {
-                    Text(BaselineEngineV1.buildingSentence(validCount: validCount, required: required))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(PerformanceTheme.primaryText)
-                } icon: {
-                    Image(systemName: "figure.run")
-                        .foregroundStyle(PerformanceTheme.accent)
-                }
-                Text("Comparisons stay neutral until \(required) valid sessions exist.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .performanceCard(padding: 14)
+            baselinePendingCard(BaselineEngineV1.buildingSentence(validCount: validCount, required: required))
 
         case .unavailable:
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Building your baseline")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(PerformanceTheme.primaryText)
-                Text("A baseline appears after three valid sessions. Completed recordings of at least ten minutes count.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .performanceCard(padding: 14)
+            baselinePendingCard("Baseline needs \(BaselineEngineV1.requiredValidSessions) valid sessions")
         }
+    }
+
+    private func baselinePendingCard(_ sentence: String) -> some View {
+        Label {
+            Text(sentence)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(PerformanceTheme.primaryText)
+        } icon: {
+            Image(systemName: "figure.run")
+                .foregroundStyle(PerformanceTheme.accent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .performanceCard(padding: 14)
     }
 
     private func observationCard(_ sentence: String) -> some View {
@@ -294,11 +270,6 @@ struct ProgressHomeView: View {
             Text(hasSessionsInRange ? "Not enough sensor coverage" : "No sessions in this range yet")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            Text(hasSessionsInRange
-                 ? "Comparisons need whole-session coverage. Sparse HR, distance gaps, and interrupted recordings stay out of trends."
-                 : "Record Football Sessions on your watch; trends appear here.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -412,10 +383,6 @@ struct TrendCard: View {
             }
 
             chart
-
-            Text("Each point is one recorded session.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
         .performanceCard()
     }

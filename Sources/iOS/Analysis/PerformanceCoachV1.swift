@@ -202,10 +202,10 @@ enum PerformanceCoachV1 {
         guard let latest = records.first(where: BaselineEngineV1.isValidSession) else { return [] }
         var notes: [String] = []
         if BaselineEngineV1.distancePerMinute(latest) == nil {
-            notes.append("Work-rate comparison unavailable — distance coverage is limited or may be undercounted.")
+            notes.append("Work-rate comparison unavailable — distance coverage is too low.")
         }
         if BaselineEngineV1.averageHeartRate(latest) == nil {
-            notes.append("HR comparison unavailable — regular samples and at least 70% whole-session coverage are needed.")
+            notes.append("HR comparison unavailable — heart-rate coverage is too low.")
         }
         return notes
     }
@@ -488,19 +488,19 @@ enum PerformanceCoachV1 {
         }
         var notes: [String] = []
         if record.completion.lifecycle != .completed {
-            notes.append("Interrupted recording — only recorded time is shown. This fragment does not count as an outing or support coaching comparisons.")
+            notes.append("Interrupted recording. This fragment does not count as an outing.")
         } else {
             if !evidence.hasWholeSessionHeartRate {
-                notes.append("HR coverage is too sparse or starts too late. Zones need at least 50% of the session clock and 60 accepted samples.")
+                notes.append("HR coverage is too sparse or starts too late for zones.")
             }
             if evidence.averageHeartRate == nil {
-                notes.append("HR comparison unavailable — needs at least 70% coverage and regular samples. Readings above 200 bpm are excluded from coaching.")
+                notes.append("HR comparison unavailable — heart-rate coverage is too low.")
             }
             if !evidence.hasEffortCoverage {
-                notes.append("Hard efforts unavailable — needs regular HR samples, at least 80% coverage, and gaps capped at 20 seconds.")
+                notes.append("Hard efforts unavailable — heart-rate coverage is too low.")
             }
             if halves == nil {
-                notes.append("Distance coverage is too limited for work-rate or fade advice. Both halves need coverage without gaps over 2 minutes; very low recorded distance may be undercounted.")
+                notes.append("Distance coverage is too limited for work-rate or fade advice.")
             }
         }
 

@@ -54,7 +54,7 @@ test('one session, established baseline, dark mode, and RTL have real screen evi
   await app.back();
   await tab(screen, 'Progress').tap();
   await progress.scrollUntilVisible(progress.getByText('Progress', { exact: true }), { direction: 'up', timeout: 60_000 });
-  const baseline = screen.getByText('Your recent baseline', { exact: true });
+  const baseline = screen.getByText(/^Baseline · last \d+ sessions$/);
   await progress.scrollUntilVisible(baseline, { direction: 'down', timeout: 60_000 });
   await expect(baseline).toBeVisible();
   await app.screenshot('progress-established-top');

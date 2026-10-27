@@ -9,20 +9,21 @@ struct OnboardingView: View {
     #endif
     @State private var page = 0
 
+    /// One title and one sentence per page.
     private let pages: [(title: String, text: String, symbol: String)] = [
         (
             "Your football sessions",
-            "Log every game and training session. See your load, intensity, and work rate, and get drills that make you fitter on the pitch.",
+            "See your load and work rate, and get a drill for what to improve.",
             "figure.soccer"
         ),
         (
             "Two ways to save",
-            "Start a recording on Apple Watch for sensor readings. Or add a manual log on iPhone with the date, duration, and football type.",
+            "Record on Apple Watch, or log a session on iPhone.",
             "applewatch"
         ),
         (
             "Know what was recorded",
-            "Watch recordings can include heart rate, distance, and motion. Manual logs show only what you enter. A missing reading stays missing.",
+            "Manual logs show only what you enter. A missing reading stays missing.",
             "checkmark.seal"
         ),
     ]
@@ -30,11 +31,6 @@ struct OnboardingView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                Text("FOOTBALL PERFORMANCE")
-                    .font(.caption.weight(.bold))
-                    .tracking(0.8)
-                    .foregroundStyle(PerformanceTheme.accent)
-
                 Image(systemName: pages[page].symbol)
                     .font(.system(size: 64, weight: .medium))
                     .foregroundStyle(PerformanceTheme.highlight)
@@ -55,17 +51,6 @@ struct OnboardingView: View {
                 }
                 .id(page)
                 .transition(.opacity)
-
-                if page == 0 {
-                    guidance("Track your load", detail: "Minutes per week, streaks, and warnings when you ramp up too fast.", symbol: "gauge.with.dots.needle.67percent")
-                    guidance("Get better every week", detail: "Each session ends with what to work on and a drill to do it.", symbol: "figure.soccer")
-                } else if page == 1 {
-                    guidance("Record on Watch", detail: "Your Watch records without a phone or internet connection.", symbol: "waveform.path.ecg")
-                    guidance("Log on iPhone", detail: "Choose Football, 5-a-side, 7-a-side, 11-a-side, Training, or Calibration.", symbol: "square.and.pencil")
-                } else if page == 2 {
-                    guidance("Your own baseline", detail: "Comparisons need three valid Watch recordings. Manual logs do not count.", symbol: "chart.bar.xaxis")
-                    guidance("Your data, clearly labelled", detail: "Manual logs stay on this iPhone. Watch recordings keep their recorded source and quality.", symbol: "iphone")
-                }
             }
             .padding(.horizontal, PerformanceTheme.screenInset)
             .padding(.top, 24)
@@ -110,19 +95,5 @@ struct OnboardingView: View {
 
     private func move(to nextPage: Int) {
         withAnimation(reduceMotion ? nil : PerformanceTheme.replaceAnimation) { page = nextPage }
-    }
-
-    private func guidance(_ title: String, detail: String, symbol: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            IconBadge(systemName: symbol, tint: PerformanceTheme.accent, size: 36)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline)
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .performanceCard()
     }
 }

@@ -194,16 +194,10 @@ private struct StartFootballView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("FOOTBALL")
-                        .font(.caption2)
-                        .tracking(1.5)
-                        .foregroundStyle(WatchTheme.highlight)
-                    Text("Ready")
-                        .font(.title2.bold())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                }
+                Text("Ready")
+                    .font(.title2.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
 
                 Button(action: recorder.startCountdown) {
                     Label("Kick off", systemImage: "play.fill")
@@ -370,12 +364,6 @@ private struct RecoveryStatusView: View {
                             .foregroundStyle(WatchTheme.accent)
                             .multilineTextAlignment(.center)
                             .accessibilityHint("Every recovered session has an iPhone receipt")
-                    }
-                    if aggregate.notRequestedByPhoneCount > 0 {
-                        Text("The iPhone already knows these sessions or you deleted its copies. Their files stay on this Watch.")
-                            .font(.footnote)
-                            .foregroundStyle(WatchTheme.muted)
-                            .multilineTextAlignment(.center)
                     }
                 } else {
                     ProgressView("Checking…")
@@ -568,10 +556,6 @@ private struct CountdownView: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Starting in \(value)")
                 .accessibilityIdentifier("watch.countdown")
-
-                Text("Get ready")
-                    .font(.footnote)
-                    .foregroundStyle(WatchTheme.muted)
 
                 Button("Cancel", action: cancel)
                     .buttonStyle(WatchCapsuleStyle())

@@ -18,11 +18,18 @@ struct CoachingPlanView: View {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 LoadStatusCard(snapshot: snapshot)
 
-                ForEach(PerformanceCoachV1.comparisonNotes(records: model.sessions), id: \.self) { note in
-                    Text(note)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .performanceCard()
+                let notes = PerformanceCoachV1.comparisonNotes(records: model.sessions)
+                if !notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(notes, id: \.self) { note in
+                            Label(note, systemImage: "exclamationmark.circle")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .performanceCard()
                 }
 
                 let personal = tips.filter { !$0.isGeneral }
@@ -30,14 +37,14 @@ struct CoachingPlanView: View {
 
                 if !personal.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        SectionHeader(title: "From your sessions", caption: "Ranked by what matters most right now.")
+                        SectionHeader(title: "From your sessions")
                         ForEach(personal) { CoachTipCard(tip: $0) }
                     }
                 }
 
                 if !general.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        SectionHeader(title: "Foundations", caption: "Weekly habits that make every footballer fitter.")
+                        SectionHeader(title: "Foundations")
                         ForEach(general) { CoachTipCard(tip: $0) }
                     }
                 }
@@ -78,12 +85,12 @@ struct LoadStatusCard: View {
             }
         }
 
-        var detail: String {
+        /// Advice only where there is something to do; the title covers the rest.
+        var advice: String? {
             switch self {
-            case .unknown: return "Needs completed outings in at least 3 of the prior 4 weeks and a usual week of at least 30 minutes."
-            case .low: return "A lighter week is fine for recovery. Rebuild gradually so you don't spike later."
-            case .steady: return "Your recorded minutes are in line with your usual week. Minutes alone do not measure intensity or readiness."
-            case .high: return "Much more than your usual week. Keep the next few days lighter."
+            case .unknown, .steady: return nil
+            case .low: return "Rebuild gradually so you don't spike later."
+            case .high: return "Keep the next few days lighter."
             }
         }
 
@@ -146,14 +153,12 @@ struct LoadStatusCard: View {
                 StatBlock(value: "\(snapshot.streakWeeks)", caption: "Week streak")
             }
 
-            Text("Completed outings only. Interrupted recordings stay in your history.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(status.detail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let advice = status.advice {
+                Text(advice)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .performanceCard()
     }

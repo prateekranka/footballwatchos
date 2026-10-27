@@ -31,8 +31,6 @@ struct SettingsHomeView: View {
                     }
                     .accessibilityIdentifier("qa-layout-stress")
                     if model.isSettingQAData { ProgressView("Loading fixture") }
-                    Text("Demo data / Worst case / Empty / One / 1,000 rows. This toggle is absent from Release builds.")
-                        .font(.caption)
                 }
             }
             #endif
@@ -54,8 +52,6 @@ struct SettingsHomeView: View {
                 }
             } header: {
                 Text("Player")
-            } footer: {
-                Text("Your age sets your heart-rate zones. It stays on this iPhone.")
             }
 
             Section("Appearance") {
@@ -89,10 +85,6 @@ struct SettingsHomeView: View {
                 }
             } header: {
                 Text("Sync and storage")
-            } footer: {
-                Text(
-                    "Deleting an iPhone copy never touches Health data or the Watch copy. Exact package export is available on every session."
-                )
             }
 
             Section("Getting started") {

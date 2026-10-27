@@ -3,9 +3,8 @@ import SwiftUI
 
 // MARK: - Heart rate report
 
-/// Full heart-rate report: synchronized trace, distribution, configured-zone
-/// section, and evidence coverage. Zones stay honest: with no configured
-/// boundaries the section says so instead of inventing thresholds.
+/// Full heart-rate report: synchronized trace, distribution, and evidence
+/// coverage. Zones live on the session overview, where the max heart rate is.
 struct HeartRateReportView: View {
     let detail: FileSessionRepository.SessionDetail
 
@@ -15,14 +14,10 @@ struct HeartRateReportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 if heartRateSegments.isEmpty {
-                    unavailableCard(
-                        title: "No heart-rate readings",
-                        message: "This session did not record usable heart-rate snapshots."
-                    )
+                    unavailableCard(title: "No heart-rate readings")
                 } else {
                     traceCard
                     distributionCard
-                    zonesCard
                     coverageCard
                 }
             }
@@ -48,9 +43,19 @@ struct HeartRateReportView: View {
     private var traceCard: some View {
         let segments = heartRateSegments
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Trace")
-                .font(.headline)
-                .foregroundStyle(PerformanceTheme.primaryText)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Trace")
+                    .font(.headline)
+                    .foregroundStyle(PerformanceTheme.primaryText)
+                Spacer()
+                if let selectedSeconds,
+                   let nearest = nearestValue(at: selectedSeconds) {
+                    Text("\(Int(nearest.rounded())) bpm")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(PerformanceTheme.heartRate)
+                }
+            }
 
             Chart {
                 ForEach(segments) { segment in
@@ -63,14 +68,7 @@ struct HeartRateReportView: View {
                         .foregroundStyle(PerformanceTheme.primaryText.opacity(0.35))
                 }
             }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: 15)) {
-                    AxisGridLine().foregroundStyle(.clear)
-                    AxisValueLabel()
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            .chartXAxis { minuteAxis() }
             .chartYAxis {
                 AxisMarks(position: .trailing) {
                     AxisValueLabel()
@@ -83,21 +81,7 @@ struct HeartRateReportView: View {
                 set: { selectedSeconds = $0.map { max(0, $0 * 60) } }
             ))
             .frame(height: 200)
-            .accessibilityLabel("Heart-rate trace across the session")
-
-            HStack {
-                Text("Minutes from session start")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                if let selectedSeconds,
-                   let nearest = nearestValue(at: selectedSeconds) {
-                    Text("\(Int(nearest.rounded())) bpm")
-                        .font(.caption.weight(.semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(PerformanceTheme.heartRate)
-                }
-            }
+            .accessibilityLabel("Heart-rate trace across the session, minutes from session start")
         }
         .performanceCard()
     }
@@ -123,9 +107,6 @@ struct HeartRateReportView: View {
             Text("Distribution")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            Text("Time spent in each five-beat band.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             Chart(buckets) { bucket in
                 BarMark(
@@ -184,23 +165,6 @@ struct HeartRateReportView: View {
         }
     }
 
-    @ViewBuilder
-    private var zonesCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Zones")
-                .font(.headline)
-                .foregroundStyle(PerformanceTheme.primaryText)
-            Label(
-                "Heart-rate zones appear once boundaries are configured in this app.",
-                systemImage: "slider.horizontal.3"
-            )
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .performanceCard()
-    }
-
     private var coverageCard: some View {
         let samples = sortedSamples
         let span = samples.count >= 2
@@ -244,9 +208,9 @@ func largestGap(in dates: [Date]) -> TimeInterval? {
 // MARK: - Movement report
 
 /// Wrist-motion evidence on its own relative timeline. Core Motion stamps
-/// are seconds since device boot, so this chart is explicitly labelled as
-/// minutes from the first recorded motion sample — never merged onto the
-/// HealthKit clock.
+/// are seconds since device boot, so this chart counts minutes from the
+/// first recorded motion sample (its accessibility label says so) and is
+/// never merged onto the HealthKit clock.
 struct MovementReportView: View {
     let detail: FileSessionRepository.SessionDetail
 
@@ -254,10 +218,7 @@ struct MovementReportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 if accelerationPoints.isEmpty {
-                    unavailableCard(
-                        title: "No motion data was captured",
-                        message: "This session recorded no accelerometer samples."
-                    )
+                    unavailableCard(title: "No motion data was captured")
                 } else {
                     traceCard
                     openCloseCard
@@ -281,12 +242,9 @@ struct MovementReportView: View {
 
     private var traceCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Wrist-motion intensity")
+            Text("Wrist motion (g)")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            Text("Acceleration magnitude in g. Time is relative to the first recorded motion sample of the session.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             Chart(accelerationPoints) { point in
                 LineMark(
@@ -297,12 +255,7 @@ struct MovementReportView: View {
                 .interpolationMethod(.catmullRom)
                 .lineStyle(StrokeStyle(lineWidth: 1))
             }
-            .chartXAxis {
-                AxisMarks(values: .stride(by: 15)) {
-                    AxisGridLine().foregroundStyle(.clear)
-                    AxisValueLabel().font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
+            .chartXAxis { minuteAxis() }
             .chartYAxis {
                 AxisMarks(position: .trailing) { axisValue in
                     AxisValueLabel {
@@ -335,11 +288,8 @@ struct MovementReportView: View {
                     StatBlock(value: String(format: "%.2f g", comparison.opening), caption: "First 15 min")
                     StatBlock(value: String(format: "%.2f g", comparison.closing), caption: "Last 15 min")
                 }
-                Text("Mean wrist-motion intensity in the opening and closing 15 recorded minutes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } else {
-                Text("This recording is too short for an opening-versus-closing comparison.")
+                Text("Too short to compare.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -375,8 +325,11 @@ struct RecordingQualityReportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 lifecycleCard
-                captureCard
-                healthCard
+                // A manual log has no capture or Health outcome to report.
+                if !detail.record.isManualEntry {
+                    captureCard
+                    healthCard
+                }
             }
             .padding(.horizontal, PerformanceTheme.screenInset)
             .padding(.top, 4)
@@ -393,7 +346,7 @@ struct RecordingQualityReportView: View {
                 Text("Manual log")
                     .font(.headline)
                     .foregroundStyle(PerformanceTheme.primaryText)
-                Text("Only the date, duration, and type were entered. No sensor readings were recorded.")
+                Text("No sensor readings were recorded")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -406,9 +359,7 @@ struct RecordingQualityReportView: View {
             }
             switch SessionRowFormatting.state(detail.record) {
             case .completed:
-                Text("This recording started and finished normally.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                EmptyView()
             case .interrupted(let reason):
                 Text(SessionRowFormatting.interruptionDetail(reason))
                     .font(.subheadline)
@@ -430,11 +381,7 @@ struct RecordingQualityReportView: View {
             Text("Capture evidence")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            if detail.record.isManualEntry {
-                Text("No sensors were used for this log.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else if let latest {
+            if let latest {
                 qualityRow("Motion source", captureSourceText(latest.source))
                 qualityRow("Accelerometer samples", "\(latest.accelerometerSampleCount)")
                 qualityRow("Device-motion samples", "\(latest.deviceMotionSampleCount)")
@@ -448,7 +395,7 @@ struct RecordingQualityReportView: View {
                 qualityRow("Accelerometer", availabilityText(latest.accelerometerAvailability))
                 qualityRow("Device motion", availabilityText(latest.deviceMotionAvailability))
             } else {
-                Text("No capture diagnostics were recorded for this session.")
+                Text("Not recorded")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -462,11 +409,6 @@ struct RecordingQualityReportView: View {
             Text("Health save outcome")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
-            if detail.record.isManualEntry {
-                Label("Manual logs are not written to Health.", systemImage: "iphone")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
             Label {
                 Text(healthSaveText(detail.record.completion.healthKitSaveOutcome))
             } icon: {
@@ -475,7 +417,6 @@ struct RecordingQualityReportView: View {
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .performanceCard()
@@ -547,11 +488,8 @@ struct SessionDetailsView: View {
                 Text("\(Int(energy.value.rounded())) kcal")
                     .font(.title3.weight(.semibold))
                     .monospacedDigit()
-                Text(provenanceText(energy.provenance))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } else {
-                Text("Not recorded in this session.")
+                Text("Not recorded")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -563,7 +501,7 @@ struct SessionDetailsView: View {
     private var provenanceCard: some View {
         let summary = detail.record.completion.summary
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Where each number comes from")
+            Text("Sources")
                 .font(.headline)
                 .foregroundStyle(PerformanceTheme.primaryText)
             if let distance = summary?.distance {
@@ -574,6 +512,9 @@ struct SessionDetailsView: View {
             }
             if let duration = summary?.duration {
                 provenanceRow("Duration", provenanceText(duration.provenance))
+            }
+            if let energy = summary?.activeEnergy {
+                provenanceRow("Active energy", provenanceText(energy.provenance))
             }
             provenanceRow("Motion capture", captureSourceText(detail.record.sessionEnvelope.captureSource))
         }
@@ -613,9 +554,6 @@ struct SessionDetailsView: View {
                     Label("Prepare exact export", systemImage: "checkmark.seal")
                 }
             }
-            Text("The export is the exact stored package, verified against its recorded digest.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             Divider()
 
@@ -624,9 +562,6 @@ struct SessionDetailsView: View {
             } label: {
                 Label("Delete iPhone copy", systemImage: "trash")
             }
-            Text("Deleting here never touches Health data or your Watch.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .performanceCard()
@@ -643,10 +578,26 @@ struct SessionDetailsView: View {
 
 // MARK: - Shared pieces
 
+/// Session-minute x-axis. The unit rides on each label ("15m"), so the
+/// chart needs no "minutes from start" caption.
+@MainActor
+func minuteAxis() -> some AxisContent {
+    AxisMarks(values: .stride(by: 15)) { axisValue in
+        AxisGridLine().foregroundStyle(.clear)
+        AxisValueLabel {
+            if let minute = axisValue.as(Double.self) {
+                Text("\(Int(minute))m")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
 /// Standard unavailable-evidence card. Used instead of any fake chart.
 @MainActor
 @ViewBuilder
-func unavailableCard(title: String, message: String) -> some View {
+func unavailableCard(title: String) -> some View {
     VStack(spacing: 10) {
         Image(systemName: "chart.bar.scatter")
             .font(.title2)
@@ -654,9 +605,6 @@ func unavailableCard(title: String, message: String) -> some View {
         Text(title)
             .font(.headline)
             .foregroundStyle(PerformanceTheme.primaryText)
-        Text(message)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
             .multilineTextAlignment(.center)
     }
     .frame(maxWidth: .infinity)

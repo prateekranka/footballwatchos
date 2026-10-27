@@ -18,11 +18,7 @@ struct SessionOverviewScreen: View {
             } else if model.isLoading {
                 ProgressView("Loading session")
             } else {
-                ContentUnavailableView {
-                    Label("Session unavailable", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text("This session is not available as a readable iPhone copy.")
-                }
+                ContentUnavailableView("Session unavailable", systemImage: "exclamationmark.triangle")
             }
         }
         .background(Color(.systemGroupedBackground))
@@ -78,7 +74,7 @@ struct SessionOverviewScreen: View {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
                 SessionHeroHeader(record: detail.record)
                 if detail.record.isManualEntry {
-                    Label("Only the date, duration, and type were entered. No sensor readings were recorded.", systemImage: "square.and.pencil")
+                    Label("No sensor readings were recorded", systemImage: "square.and.pencil")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .performanceCard()
@@ -118,7 +114,6 @@ struct SessionOverviewScreen: View {
                         icon: "heart.fill",
                         tint: PerformanceTheme.heartRate,
                         title: "Heart rate",
-                        subtitle: "Trace, distribution, and coverage",
                         trailing: model.visualSummaries[sessionID]?.heartRateRange.map {
                             "\(Int($0.lowerBound.rounded()))–\(Int($0.upperBound.rounded())) bpm"
                         }
@@ -133,7 +128,6 @@ struct SessionOverviewScreen: View {
                         icon: "waveform.path.ecg",
                         tint: PerformanceTheme.movement,
                         title: "Movement",
-                        subtitle: "Wrist-motion evidence on its own timeline",
                         trailing: nil
                     )
                 }
@@ -146,7 +140,6 @@ struct SessionOverviewScreen: View {
                         icon: "checkmark.seal",
                         tint: recordQualityTint(detail),
                         title: "Recording quality",
-                        subtitle: "Source, coverage, and gaps",
                         trailing: recordQualityLabel(detail)
                     )
                 }
@@ -159,7 +152,6 @@ struct SessionOverviewScreen: View {
                         icon: "list.bullet",
                         tint: .secondary,
                         title: "Details",
-                        subtitle: "Energy, provenance, export, and deletion",
                         trailing: nil
                     )
                 }
@@ -260,31 +252,41 @@ struct SessionInsightsSection: View {
         VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
             if insights.zoneSeconds > 0 {
                 VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(
-                        title: "Intensity",
-                        caption: "Time in each heart-rate zone. Max \(Int(insights.heartRateMax.rounded())) bpm "
-                            + (ageIsSet ? "from your age." : "estimated; set your age in Settings for accuracy.")
-                    )
+                    HStack(alignment: .firstTextBaseline) {
+                        SectionHeader(title: "Intensity")
+                        Text(maxHeartRateLabel)
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                            .accessibilityIdentifier("coach-max-heart-rate")
+                    }
                     ZoneBreakdownView(zones: insights.zones, heartRateMax: insights.heartRateMax)
                         .performanceCard()
                         .accessibilityIdentifier("coach-zones")
                 }
             }
 
-            ForEach(insights.evidenceNotes, id: \.self) { note in
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .performanceCard()
+            if !insights.evidenceNotes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(insights.evidenceNotes, id: \.self) { note in
+                        Label(note, systemImage: "exclamationmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .performanceCard()
             }
 
             if !tiles.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeader(title: "Effort")
                     LazyVGrid(columns: columns, spacing: 10) {
-                        ForEach(tiles, id: \.caption) { tile in
+                        ForEach(tiles, id: \.id) { tile in
                             MetricTile(icon: tile.icon, tint: tile.tint, value: tile.value, caption: tile.caption)
-                                .accessibilityIdentifier("coach-" + tile.caption)
+                                .accessibilityIdentifier("coach-" + tile.id)
                         }
                     }
                 }
@@ -292,14 +294,22 @@ struct SessionInsightsSection: View {
 
             if !insights.takeaways.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
-                    SectionHeader(title: "How to get better", caption: "What this session says to work on.")
+                    SectionHeader(title: "How to get better")
                     ForEach(insights.takeaways) { CoachTipCard(tip: $0) }
                 }
             }
         }
     }
 
+    /// Max heart rate for the zones. "est." marks an age-free estimate; the
+    /// Age row in Settings replaces it.
+    private var maxHeartRateLabel: String {
+        "Max \(Int(insights.heartRateMax.rounded())) bpm" + (ageIsSet ? "" : " · est.")
+    }
+
+    /// `id` is a stable accessibility identifier, independent of the copy.
     private struct Tile {
+        let id: String
         let icon: String
         let tint: Color
         let value: String
@@ -310,42 +320,48 @@ struct SessionInsightsSection: View {
         var result: [Tile] = []
         if let share = insights.highIntensityShare {
             result.append(Tile(
+                id: "high-intensity",
                 icon: "flame.fill",
                 tint: PerformanceTheme.heartRate,
                 value: "\(Int((share * 100).rounded()))%",
-                caption: "Recorded HR time above 80% max"
+                caption: "Above 80% max HR"
             ))
         }
         result.append(Tile(
+            id: "hard-efforts",
             icon: "bolt.heart.fill",
             tint: PerformanceTheme.warning,
             value: insights.highIntensityEffortCount.map(String.init) ?? "—",
             caption: "Hard efforts"
         ))
         result.append(Tile(
+            id: "effort-recovery",
             icon: "arrow.clockwise.heart",
             tint: PerformanceTheme.movement,
             value: insights.medianRecoveryBetweenEffortsS.map { "\(Int($0.rounded())) s" } ?? "—",
-            caption: "Time between hard efforts"
+            caption: "Between efforts"
         ))
         if let first = insights.firstHalfDistancePerMinute, let second = insights.secondHalfDistancePerMinute {
             result.append(Tile(
+                id: "half-pace",
                 icon: "figure.run",
                 tint: PerformanceTheme.accent,
                 value: "\(Int(first.rounded())) → \(Int(second.rounded()))",
-                caption: "m/min, 1st → 2nd half"
+                caption: "m/min by half"
             ))
         }
         if insights.sprintCount > 0 {
             result.append(Tile(
+                id: "sprints",
                 icon: "hare.fill",
                 tint: PerformanceTheme.improve,
                 value: "\(insights.sprintCount)",
-                caption: "Sprints detected"
+                caption: "Sprints"
             ))
         }
         if let peak = insights.peakHeartRate {
             result.append(Tile(
+                id: "peak-heart-rate",
                 icon: "heart.fill",
                 tint: PerformanceTheme.heartRate,
                 value: "\(Int(peak.rounded()))",
@@ -361,7 +377,6 @@ struct ExploreRow: View {
     let icon: String
     let tint: Color
     let title: String
-    let subtitle: String
     let trailing: String?
     @Environment(\.dynamicTypeSize) private var textSize
 
@@ -384,11 +399,6 @@ struct ExploreRow: View {
                 Text(title)
                     .font(.body.weight(.medium))
                     .foregroundStyle(PerformanceTheme.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(textSize.isAccessibilitySize ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
                 if textSize.isAccessibilitySize, let trailing {
                     Text(trailing)
@@ -440,27 +450,14 @@ struct UnfoldedHeroCard: View {
     @Binding var selectedSeconds: Double?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.dynamicTypeSize) private var textSize
 
     private var startedAt: Date { detail.record.startedAt }
 
     var body: some View {
-        let headingLayout = textSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         VStack(alignment: .leading, spacing: 12) {
-            headingLayout {
-                Text("How it unfolded")
-                    .font(.headline)
-                    .foregroundStyle(PerformanceTheme.primaryText)
-                if !textSize.isAccessibilitySize { Spacer() }
-                if let duration = SessionRowFormatting.summaryDuration(detail.record) {
-                    Text(SessionRowFormatting.durationLabel(duration))
-                        .font(.caption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text("How it unfolded")
+                .font(.headline)
+                .foregroundStyle(PerformanceTheme.primaryText)
 
             heartRateLane
 
@@ -670,10 +667,10 @@ struct UnfoldedHeroCard: View {
     private var distanceLane: some View {
         let bars = distanceMinuteBars
         let peak = bars.map(\.meters).max() ?? 0
-        return VStack(alignment: .leading, spacing: 4) {
+        return Group {
             if bars.isEmpty {
-                Text("No per-minute distance readings.")
-                    .font(.caption2)
+                Label("No distance readings", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 Chart {
@@ -693,16 +690,17 @@ struct UnfoldedHeroCard: View {
                 .frame(height: 34)
                 .accessibilityLabel("Distance per minute across the session")
             }
-            Text(bars.isEmpty ? "Distance" : "Distance per minute (relative height)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
     }
 
     private var legend: some View {
         HStack(spacing: 14) {
-            legendDot(PerformanceTheme.heartRate, "Heart rate")
-            legendDot(PerformanceTheme.accent.opacity(0.55), "Distance per minute")
+            if !heartRateSegments.isEmpty {
+                legendDot(PerformanceTheme.heartRate, "Heart rate")
+            }
+            if !distanceMinuteBars.isEmpty {
+                legendDot(PerformanceTheme.accent.opacity(0.55), "Distance per minute")
+            }
             Spacer()
         }
     }

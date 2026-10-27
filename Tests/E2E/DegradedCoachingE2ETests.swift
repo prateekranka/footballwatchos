@@ -47,8 +47,8 @@ final class DegradedCoachingE2ETests: XCTestCase {
         XCTAssertFalse(text("1,440", in: app).exists)
         XCTAssertFalse(text("1440", in: app).exists)
         XCTAssertTrue(reveal(text("This fragment does not count as an outing", in: app), in: app))
-        XCTAssertTrue(reveal(app.descendants(matching: .any)["coach-Hard efforts"], in: app))
-        XCTAssertTrue(app.descendants(matching: .any)["coach-Hard efforts"].label.contains("—"))
+        XCTAssertTrue(reveal(app.descendants(matching: .any)["coach-hard-efforts"], in: app))
+        XCTAssertTrue(app.descendants(matching: .any)["coach-hard-efforts"].label.contains("—"))
         XCTAssertFalse(text("Intensity", in: app).exists)
         XCTAssertFalse(text("How to get better", in: app).exists)
         capture(app, "degraded-03-five-minute-next-day-recovery")
@@ -69,11 +69,11 @@ final class DegradedCoachingE2ETests: XCTestCase {
 
         openSession("11-a-side · Watch recording", in: app)
         XCTAssertTrue(reveal(text("Intensity", in: app), in: app))
-        XCTAssertTrue(text("Max 190 bpm estimated", in: app).exists)
+        XCTAssertEqual(app.descendants(matching: .any)["coach-max-heart-rate"].label, "Max 190 bpm · est.")
         XCTAssertTrue(reveal(text("Z5 Max", in: app), in: app))
         XCTAssertTrue(text("Z5 Max", in: app).label.contains("40%"))
-        XCTAssertTrue(reveal(app.descendants(matching: .any)["coach-Hard efforts"], in: app))
-        XCTAssertTrue(app.descendants(matching: .any)["coach-Hard efforts"].label.hasPrefix("47"))
+        XCTAssertTrue(reveal(app.descendants(matching: .any)["coach-hard-efforts"], in: app))
+        XCTAssertTrue(app.descendants(matching: .any)["coach-hard-efforts"].label.hasPrefix("47"))
         XCTAssertTrue(reveal(text("You faded in the second half", in: app), in: app))
         XCTAssertTrue(text("from 110 to 70 m/min", in: app).exists)
         capture(app, "degraded-06-good-coverage-still-has-insights")
@@ -102,12 +102,12 @@ final class DegradedCoachingE2ETests: XCTestCase {
         XCTAssertTrue(reveal(text("HR coverage is too sparse or starts too late", in: app), in: app))
         XCTAssertFalse(text("Z5 Max", in: app).exists)
         XCTAssertFalse(app.descendants(matching: .any)["coach-zones"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["coach-Recorded HR time above 80% max"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["coach-high-intensity"].exists)
         XCTAssertTrue(reveal(text("Distance coverage is too limited", in: app), in: app))
-        let efforts = app.descendants(matching: .any)["coach-Hard efforts"]
+        let efforts = app.descendants(matching: .any)["coach-hard-efforts"]
         XCTAssertTrue(reveal(efforts, in: app))
         XCTAssertTrue(efforts.label.contains("—"))
-        let interval = app.descendants(matching: .any)["coach-Time between hard efforts"]
+        let interval = app.descendants(matching: .any)["coach-effort-recovery"]
         XCTAssertTrue(reveal(interval, in: app))
         XCTAssertTrue(interval.label.contains("—"))
         XCTAssertFalse(text("You faded in the second half", in: app).exists)

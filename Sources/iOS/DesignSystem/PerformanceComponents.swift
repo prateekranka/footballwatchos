@@ -58,25 +58,17 @@ extension View {
     }
 }
 
-/// Section title with an optional caption beneath it.
+/// Section title. Titles stand alone: no caption slot, so a section that
+/// needs explaining gets a better title or layout instead.
 struct SectionHeader: View {
     let title: String
-    var caption: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(PerformanceTheme.primaryText)
-                .accessibilityAddTraits(.isHeader)
-            if let caption {
-                Text(caption)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        Text(title)
+            .font(.title3.weight(.bold))
+            .foregroundStyle(PerformanceTheme.primaryText)
+            .accessibilityAddTraits(.isHeader)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -116,7 +108,8 @@ struct MetricTile: View {
                 Text(caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2, reservesSpace: true)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
         }
         .performanceCard(padding: 12)
@@ -176,7 +169,7 @@ struct CoachTipCard: View {
             HStack(alignment: .top, spacing: 12) {
                 IconBadge(systemName: tip.focus.symbolName, tint: tip.tone.tint, size: 38)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(tip.tone.label.uppercased()) · \(tip.focus.title.uppercased())")
+                    Text("\(eyebrow.uppercased()) · \(tip.focus.title.uppercased())")
                         .font(.caption2.weight(.bold))
                         .tracking(0.6)
                         .foregroundStyle(tip.tone.tint)
@@ -209,15 +202,15 @@ struct CoachTipCard: View {
                     in: RoundedRectangle(cornerRadius: PerformanceTheme.innerCorner, style: .continuous)
                 )
             }
-
-            if tip.isGeneral {
-                Text("General football-fitness guidance")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
         }
         .performanceCard()
         .accessibilityElement(children: .combine)
+    }
+
+    /// General guidance is not drawn from the player's sessions, so it says
+    /// so in the eyebrow instead of in a footnote.
+    private var eyebrow: String {
+        tip.isGeneral ? "Foundation" : tip.tone.label
     }
 }
 

@@ -258,20 +258,12 @@ struct SessionSyncSheet: View {
                             }
                             .disabled(isRetrying || model.outboxPendingCount == 0)
                         } else {
-                            Text(
-                                "Backup is not configured on this iPhone. Watch recordings keep their Watch copy. Manual logs stay on this iPhone."
-                            )
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            row("Backup", value: "Not set up")
                         }
                     }
 
                     section(title: "Manual logs") {
                         row("Saved on this iPhone", value: "\(model.sessions.filter(\.isManualEntry).count)")
-                        Text("Manual logs do not upload or create a Watch copy.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .padding(PerformanceTheme.cardInset)
                     }
 
                     if let message = model.message {
@@ -320,14 +312,13 @@ struct SessionSyncSheet: View {
                 ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
                     .tint(PerformanceTheme.accent)
                     .accessibilityLabel("\(progress.done) of \(progress.total) Watch sessions on this iPhone")
-                Text("\(progress.done) of \(progress.total) Watch sessions are on this iPhone")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
-            Text(summary.explanation)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let action = summary.action {
+                Text(action)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let failure = model.watchStatus?.lastTransferError {
                 Text("Last transfer error: \(failure)")
                     .font(.footnote)
@@ -400,7 +391,8 @@ struct WatchTransferSummary: Equatable {
     }
 
     let headline: String
-    let explanation: String
+    /// What the player can do about it. Nil when nothing is needed.
+    let action: String?
     let symbolName: String
     let isWarning: Bool
     let progress: Progress?
@@ -412,14 +404,14 @@ struct WatchTransferSummary: Equatable {
 
         if isReceiving {
             headline = "Receiving a session now"
-            explanation = "Sessions arrive one at a time. Each one is checked and saved before the next."
+            action = nil
             symbolName = "applewatch.radiowaves.left.and.right"
             isWarning = false
             return
         }
         guard let status else {
             headline = "No report from your Watch yet"
-            explanation = "Open the app on your Watch. It then tells this iPhone what it has to send."
+            action = "Open the app on your Watch."
             symbolName = "applewatch"
             isWarning = false
             return
@@ -428,7 +420,7 @@ struct WatchTransferSummary: Equatable {
             headline = status.waiting == 1
                 ? "1 session still on your Watch"
                 : "\(status.waiting) sessions still on your Watch"
-            explanation = "Your Watch sends them in the background, one at a time. Keep it near this iPhone with Bluetooth on. If nothing arrives, open the app on your Watch."
+            action = "Keep your Watch near this iPhone. If nothing arrives, open the app on your Watch."
             symbolName = "applewatch.radiowaves.left.and.right"
             isWarning = false
             return
@@ -437,25 +429,24 @@ struct WatchTransferSummary: Equatable {
             headline = status.needsRecovery == 1
                 ? "1 recording stopped early"
                 : "\(status.needsRecovery) recordings stopped early"
-            explanation = "On your Watch, open Session Recovery and tap Recover. The Watch then sends them here."
+            action = "On your Watch, open Session Recovery and tap Recover."
             symbolName = "exclamationmark.triangle.fill"
             isWarning = true
             return
         }
         if status.failed > 0 {
             headline = status.failed == 1 ? "1 session did not send" : "\(status.failed) sessions did not send"
-            explanation = "The Watch retries automatically, with a delay between attempts. Your recording stays on the Watch."
+            action = nil
             symbolName = "exclamationmark.triangle.fill"
             isWarning = true
             return
         }
         if (status.notRequestedByPhone ?? 0) > 0 {
             headline = "No more Watch sessions to send"
-            explanation = "The iPhone already knows some sessions or you deleted its copies. Their files stay on your Watch."
         } else {
             headline = status.savedOnWatch == 0 ? "No sessions on your Watch" : "All Watch sessions are here"
-            explanation = "Your Watch has nothing left to send."
         }
+        action = nil
         symbolName = "checkmark.circle.fill"
         isWarning = false
     }

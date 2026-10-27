@@ -44,7 +44,7 @@ final class CoachingE2ETests: XCTestCase {
         XCTAssertTrue(reveal(app.element(containing: "10% below your baseline of 100 m/min"), in: app))
         capture(app, "02-plan-personal")
         XCTAssertTrue(reveal(app.element(containing: "Foundations"), in: app))
-        XCTAssertTrue(reveal(app.element(containing: "General football-fitness guidance"), in: app))
+        XCTAssertTrue(reveal(app.element(containing: "FOUNDATION ·"), in: app))
         capture(app, "03-plan-foundations")
         goBack(app)
 
@@ -53,7 +53,7 @@ final class CoachingE2ETests: XCTestCase {
         openSession(app, containing: "11-a-side · Watch recording")
         XCTAssertTrue(app.element(containing: "11-a-side · Watch recording").waitForExistence(timeout: 10))
         XCTAssertTrue(reveal(app.element(containing: "Intensity"), in: app))
-        XCTAssertTrue(app.element(containing: "estimated; set your age").exists)
+        XCTAssertTrue(maxHeartRate(app).label.hasSuffix("· est."), "No age set, so max HR must be marked as estimated")
         capture(app, "04-session-intensity")
         XCTAssertTrue(reveal(app.element(containing: "You faded in the second half"), in: app))
         XCTAssertTrue(app.element(containing: "from 110 to 70 m/min").exists)
@@ -85,7 +85,8 @@ final class CoachingE2ETests: XCTestCase {
 
         app.tabBars.buttons["Sessions"].tap()
         openSession(app, containing: "11-a-side · Watch recording")
-        XCTAssertTrue(reveal(app.element(containing: "Max 186 bpm from your age"), in: app))
+        XCTAssertTrue(reveal(maxHeartRate(app), in: app))
+        XCTAssertEqual(maxHeartRate(app).label, "Max 186 bpm", "Age 31 gives 208 − 0.7 × 31 ≈ 186 bpm, with no estimate mark")
         capture(app, "08-session-zones-from-age")
     }
 
@@ -135,6 +136,10 @@ final class CoachingE2ETests: XCTestCase {
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
         XCTAssertTrue(reveal(row, in: app), "No session row containing \(text)")
         row.tap()
+    }
+
+    private func maxHeartRate(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["coach-max-heart-rate"]
     }
 
     private func goBack(_ app: XCUIApplication) {

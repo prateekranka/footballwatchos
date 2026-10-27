@@ -6,11 +6,7 @@ struct WatchDiagnosticsView: View {
     var body: some View {
         Group {
             if model.watchDiagnostics.isEmpty {
-                ContentUnavailableView {
-                    Label("No Watch diagnostics", systemImage: "checkmark.shield")
-                } description: {
-                    Text("Interrupted Watch startup reports appear here after the Watch relaunches and transfers them.")
-                }
+                ContentUnavailableView("No Watch diagnostics", systemImage: "checkmark.shield")
             } else {
                 List(model.watchDiagnostics) { report in
                     NavigationLink {
@@ -59,9 +55,6 @@ private struct WatchDiagnosticDetailView: View {
                 LabeledContent("Watch software") {
                     Text(report.operatingSystemVersion)
                 }
-                Text("The app detected that the previous armed attempt ended before a terminal checkpoint. This is an app breadcrumb report, not Apple’s protected system crash report.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Checkpoints") {

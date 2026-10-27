@@ -88,35 +88,11 @@ struct SessionsHomeView: View {
         }
     }
 
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: .now)
-        switch hour {
-        case 5..<12: return "Good morning"
-        case 12..<18: return "Good afternoon"
-        default: return "Good evening"
-        }
-    }
-
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("FOOTBALL PERFORMANCE")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(PerformanceTheme.accent)
-                .tracking(0.8)
-                .accessibilityHidden(true)
-
-            Text(greeting)
-                .font(PerformanceTheme.screenTitle)
-                .foregroundStyle(PerformanceTheme.primaryText)
-
-            Text(model.isLibraryLoading
-                 ? "Loading your football history."
-                 : model.sessions.isEmpty
-                 ? "Log your football and get better every week."
-                 : "Here is how your football is going.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        Text("Sessions")
+            .font(PerformanceTheme.screenTitle)
+            .foregroundStyle(PerformanceTheme.primaryText)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var actions: some View {
@@ -139,7 +115,7 @@ struct SessionsHomeView: View {
     private func focusSection(_ tip: PerformanceCoachV1.Tip) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                SectionHeader(title: "Your focus", caption: "One thing to work on next")
+                SectionHeader(title: "Your focus")
                 NavigationLink {
                     CoachingPlanView()
                 } label: {
@@ -185,19 +161,14 @@ struct SessionsHomeView: View {
         model.isReceivingFromWatch || waitingOnWatch > 0
     }
 
+    /// The title alone carries the state; the Add session button and the
+    /// sync pill below it are the next steps.
     private var emptyStateTitle: String {
         if model.isReceivingFromWatch { return "Receiving your first session" }
-        if waitingOnWatch > 0 { return "Your sessions are on the way" }
-        return "No sessions yet"
-    }
-
-    private var emptyStateMessage: String {
-        if model.isReceivingFromWatch { return "Your Apple Watch is transferring a recording now." }
         if waitingOnWatch > 0 {
-            let sessions = waitingOnWatch == 1 ? "1 session" : "\(waitingOnWatch) sessions"
-            return "Your Apple Watch has \(sessions) to send. Each one shows here when it arrives."
+            return waitingOnWatch == 1 ? "1 session on the way" : "\(waitingOnWatch) sessions on the way"
         }
-        return "Start a Football Session on your watch, or add a manual log on this iPhone."
+        return "No sessions yet"
     }
 
     private var emptyState: some View {
@@ -206,34 +177,11 @@ struct SessionsHomeView: View {
                 .font(.system(size: 40, weight: .semibold))
                 .foregroundStyle(PerformanceTheme.highlight)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(emptyStateTitle)
-                    .font(.title2.weight(.bold))
-                Text(emptyStateMessage)
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                emptyStep("1", "Record or log every session you play")
-                emptyStep("2", "See your load, intensity, and work rate")
-                emptyStep("3", "Get drills that target what holds you back")
-            }
+            Text(emptyStateTitle)
+                .font(.title2.weight(.bold))
         }
         .heroSurface(padding: 22)
         .accessibilityElement(children: .combine)
-    }
-
-    private func emptyStep(_ number: String, _ text: String) -> some View {
-        HStack(spacing: 10) {
-            Text(number)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(PerformanceTheme.pitchDeep)
-                .frame(width: 22, height: 22)
-                .background(PerformanceTheme.highlight, in: Circle())
-            Text(text)
-                .font(.subheadline.weight(.medium))
-        }
     }
 }
 
@@ -319,17 +267,16 @@ private struct LatestSessionCard: View {
                         Text(SessionRowFormatting.dayLabel(record.startedAt))
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(PerformanceTheme.primaryText)
-                        Text(SessionRowFormatting.timeLabel(record.startedAt))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        Text(
+                            "\(SessionRowFormatting.timeLabel(record.startedAt)) · "
+                                + SessionRowFormatting.typeAndSource(record)
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                     }
                     if !textSize.isAccessibilitySize { Spacer() }
-                    StateTag(state: SessionRowFormatting.state(record))
+                    StateTag.ifNotCompleted(SessionRowFormatting.state(record))
                 }
-
-                Text(SessionRowFormatting.typeAndSource(record))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
 
                 AdaptiveMetricGroup {
                     StatBlock(
@@ -359,20 +306,6 @@ private struct LatestSessionCard: View {
                 SessionFingerprintView(
                     fingerprint: model.visualSummaries[record.sessionID]?.fingerprint
                 )
-
-                if let observation = model.visualSummaries[record.sessionID]?.observation {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "sparkle")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(PerformanceTheme.accent)
-                            .padding(.top, 1)
-                        Text(observation.sentence)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
             }
             .performanceCard()
         }
@@ -406,20 +339,18 @@ struct RecentSessionRow: View {
                         )
                     }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(SessionRowFormatting.dayLabel(record.startedAt))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(PerformanceTheme.primaryText)
+                        HStack(spacing: 6) {
+                            Text(SessionRowFormatting.dayLabel(record.startedAt))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(PerformanceTheme.primaryText)
+                            StateTag.ifNotCompleted(SessionRowFormatting.state(record))
+                        }
                         Text(
                             "\(SessionRowFormatting.timeLabel(record.startedAt)) · "
                                 + SessionRowFormatting.typeAndSource(record)
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        if !record.isManualEntry {
-                            Text(SessionRowFormatting.state(record).label)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
                     }
                     if !textSize.isAccessibilitySize { Spacer() }
                     VStack(alignment: textSize.isAccessibilitySize ? .leading : .trailing, spacing: 1) {
@@ -461,6 +392,12 @@ struct RecentSessionRow: View {
 /// alone; the text always names the state.
 struct StateTag: View {
     let state: SessionRowFormatting.SessionState
+
+    /// Completed is the normal case, so lists tag only the exceptions.
+    @ViewBuilder
+    static func ifNotCompleted(_ state: SessionRowFormatting.SessionState) -> some View {
+        if state != .completed { StateTag(state: state) }
+    }
 
     var body: some View {
         Text(state.label)
