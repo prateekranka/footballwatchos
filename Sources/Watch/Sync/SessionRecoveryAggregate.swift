@@ -244,7 +244,11 @@ extension WatchSyncStatusV1 {
             failed: failedOnly.count,
             needsRecovery: interrupted.subtracting(recovered).count,
             updatedAt: now,
-            notRequestedByPhone: saved.intersection(notRequested).subtracting(imported).count
+            notRequestedByPhone: saved.intersection(notRequested).subtracting(imported).count,
+            lastTransferError: outboxRecords
+                .filter { $0.status == .retryableFailure && failedOnly.contains($0.key.sessionID) }
+                .max(by: { $0.lastUpdatedAt < $1.lastUpdatedAt })
+                .flatMap { $0.lastError.map { String($0.prefix(1000)) } }
         )
     }
 }

@@ -8,6 +8,22 @@ final class FootballPerformanceWatchDelegate: NSObject, WKApplicationDelegate {
     func handleActiveWorkoutRecovery() {
         recorder.recoverActiveWorkout()
     }
+
+    func handle(_ backgroundTasks: Set<WKRefreshBackgroundTask>) {
+        for task in backgroundTasks {
+            if let connectivityTask = task as? WKWatchConnectivityRefreshBackgroundTask {
+                recorder.syncCoordinator.handleBackgroundTask(connectivityTask)
+            } else if let snapshotTask = task as? WKSnapshotRefreshBackgroundTask {
+                snapshotTask.setTaskCompleted(
+                    restoredDefaultState: false,
+                    estimatedSnapshotExpiration: .distantFuture,
+                    userInfo: nil
+                )
+            } else {
+                task.setTaskCompletedWithSnapshot(false)
+            }
+        }
+    }
 }
 
 @main
@@ -28,6 +44,9 @@ struct FootballPerformanceWatchApp: App {
             )
         }
         .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                delegate.recorder.syncCoordinator.refreshConnection()
+            }
             WatchLog.capture(
                 WatchLog.lifecycle,
                 "scenePhase -> \(String(describing: newPhase))"

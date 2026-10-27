@@ -66,6 +66,19 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         sendContext()
     }
 
+    func refreshConnection() {
+        if session.activationState == .notActivated {
+            session.activate()
+        } else if session.activationState == .activated {
+            requeueDurableReceipts()
+            sendContext()
+        }
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        refreshConnection()
+    }
+
     /// Application context keeps only the latest value and reaches the Watch
     /// the next time it runs, so an age change or a library change made while
     /// the Watch is away still arrives. Each update replaces the whole
@@ -354,5 +367,9 @@ final class PhoneTransferRuntime: @unchecked Sendable {
     func start() {
         coordinator?.activate()
         coordinator?.reconcileAndRequeueAtStartup()
+    }
+
+    func refreshConnection() {
+        coordinator?.refreshConnection()
     }
 }

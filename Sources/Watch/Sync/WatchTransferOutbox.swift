@@ -46,6 +46,10 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
     var lastUpdatedAt: Date
     var importedAt: Date?
     var receipt: SyncReceiptV1?
+    var submittedAt: Date?
+    var completedTransferUnits: Int64?
+    var totalTransferUnits: Int64?
+    var lastTransferProgressAt: Date?
 
     init(
         transferEnvelope: SessionTransferEnvelopeV1,
@@ -65,6 +69,10 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
         self.lastUpdatedAt = now
         self.importedAt = nil
         self.receipt = nil
+        self.submittedAt = nil
+        self.completedTransferUnits = nil
+        self.totalTransferUnits = nil
+        self.lastTransferProgressAt = nil
     }
 }
 
@@ -74,6 +82,12 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     static let formatVersion = 1
     static let receiptTimeout: TimeInterval = 300
     static let maximumAutomaticAttempts = 4
+    static let stalledQueueTimeout: TimeInterval = 15 * 60
+
+    static func retryDelay(after attemptCount: Int) -> TimeInterval {
+        if attemptCount >= maximumAutomaticAttempts { return 15 * 60 }
+        return min(300, 30 * pow(2, Double(max(1, attemptCount) - 1)))
+    }
 
     let formatVersion: Int
     var records: [String: WatchTransferOutboxRecordV1]
@@ -82,6 +96,21 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     init(records: [String: WatchTransferOutboxRecordV1] = [:]) {
         self.formatVersion = Self.formatVersion
         self.records = records
+    }
+
+    var nextAutomaticRetryAt: Date? {
+        records.values.compactMap { record -> Date? in
+            switch record.status {
+            case .pending:
+                return .distantPast
+            case .retryableFailure:
+                return record.lastUpdatedAt.addingTimeInterval(Self.retryDelay(after: record.attemptCount))
+            case .waitingForReceipt:
+                return record.lastUpdatedAt.addingTimeInterval(Self.receiptTimeout)
+            case .queued, .imported, .notRequestedByPhone:
+                return nil
+            }
+        }.min()
     }
 
     mutating func enqueue(
@@ -126,16 +155,24 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         }
         let candidates = records.values
             .filter {
-                ($0.status == .pending || $0.status == .retryableFailure)
-                    && $0.attemptCount < Self.maximumAutomaticAttempts
+                $0.status == .pending
+                    || ($0.status == .retryableFailure
+                        && now.timeIntervalSince($0.lastUpdatedAt) >= Self.retryDelay(after: $0.attemptCount))
             }
             .sorted { $0.createdAt < $1.createdAt }
 
         for candidate in candidates {
             mutate(candidate.key, now: now) { record in
                 record.status = .queued
+                if record.attemptCount >= Self.maximumAutomaticAttempts {
+                    record.attemptCount = 0
+                }
                 record.attemptCount += 1
                 record.lastError = nil
+                record.submittedAt = nil
+                record.completedTransferUnits = nil
+                record.totalTransferUnits = nil
+                record.lastTransferProgressAt = nil
             }
         }
 
@@ -160,6 +197,28 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
                 // deliberately does not mean the iPhone has imported data.
                 record.lastError = nil
             }
+        }
+    }
+
+    mutating func recordSubmission(for key: WatchTransferOutboxKeyV1, now: Date) {
+        guard records[key.storageKey]?.status == .queued else { return }
+        mutate(key, now: now) { $0.submittedAt = now }
+    }
+
+    mutating func recordProgress(
+        for key: WatchTransferOutboxKeyV1,
+        completed: Int64,
+        total: Int64,
+        now: Date
+    ) {
+        guard let current = records[key.storageKey], current.status == .queued,
+              current.lastTransferProgressAt == nil
+                || current.completedTransferUnits != completed
+                || current.totalTransferUnits != total else { return }
+        mutate(key, now: now) {
+            $0.completedTransferUnits = completed
+            $0.totalTransferUnits = total
+            $0.lastTransferProgressAt = now
         }
     }
 
@@ -230,11 +289,21 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         now: Date
     ) {
         for key in records.values.map(\.key) {
-            guard let record = records[key.storageKey], record.status == .queued else { continue }
-            guard !outstanding.contains(key) else { continue }
-            mutate(key, now: now) { mutableRecord in
-                mutableRecord.status = .retryableFailure
-                mutableRecord.lastError = "Framework transfer was no longer outstanding; retry is pending."
+            guard let record = records[key.storageKey],
+                  record.status != .imported,
+                  record.status != .notRequestedByPhone else { continue }
+            if outstanding.contains(key) {
+                if record.status != .queued {
+                    mutate(key, now: now) {
+                        $0.status = .queued
+                        $0.lastError = nil
+                    }
+                }
+            } else if record.status == .queued {
+                mutate(key, now: now) { mutableRecord in
+                    mutableRecord.status = .retryableFailure
+                    mutableRecord.lastError = "Framework transfer was no longer outstanding; retry is pending."
+                }
             }
         }
     }
@@ -427,6 +496,22 @@ actor WatchTransferOutbox {
     ) throws {
         state.recordFrameworkCompletion(for: key, errorDescription: errorDescription, now: now)
         try persist()
+    }
+
+    func recordSubmission(for key: WatchTransferOutboxKeyV1, now: Date = Date()) throws {
+        state.recordSubmission(for: key, now: now)
+        try persist()
+    }
+
+    func recordProgress(
+        for key: WatchTransferOutboxKeyV1,
+        completed: Int64,
+        total: Int64,
+        now: Date = Date()
+    ) throws {
+        let before = state
+        state.recordProgress(for: key, completed: completed, total: total, now: now)
+        if state != before { try persist() }
     }
 
     func reconcileOutstandingTransfers(

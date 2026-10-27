@@ -335,6 +335,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
     /// Interrupted recordings that need Recover on the Watch first.
     public let needsRecovery: Int
     public let notRequestedByPhone: Int?
+    public let lastTransferError: String?
     public let updatedAt: Date
 
     public init(
@@ -344,7 +345,8 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
         failed: Int,
         needsRecovery: Int,
         updatedAt: Date,
-        notRequestedByPhone: Int? = nil
+        notRequestedByPhone: Int? = nil,
+        lastTransferError: String? = nil
     ) {
         self.savedOnWatch = savedOnWatch
         self.onIPhone = onIPhone
@@ -353,6 +355,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
         self.needsRecovery = needsRecovery
         self.updatedAt = updatedAt
         self.notRequestedByPhone = notRequestedByPhone
+        self.lastTransferError = lastTransferError
     }
 
     /// Same counts, ignoring when they were taken.
@@ -361,6 +364,7 @@ public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
             && waiting == other.waiting && failed == other.failed
             && needsRecovery == other.needsRecovery
             && (notRequestedByPhone ?? 0) == (other.notRequestedByPhone ?? 0)
+            && lastTransferError == other.lastTransferError
     }
 
     public func encoded() throws -> Data {

@@ -328,6 +328,12 @@ struct SessionSyncSheet: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let failure = model.watchStatus?.lastTransferError {
+                Text("Last transfer error: \(failure)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(PerformanceTheme.cardInset)
         .accessibilityElement(children: .combine)
@@ -438,7 +444,7 @@ struct WatchTransferSummary: Equatable {
         }
         if status.failed > 0 {
             headline = status.failed == 1 ? "1 session did not send" : "\(status.failed) sessions did not send"
-            explanation = "The Watch tries again the next time you open the app on it."
+            explanation = "The Watch retries automatically, with a delay between attempts. Your recording stays on the Watch."
             symbolName = "exclamationmark.triangle.fill"
             isWarning = true
             return
