@@ -1,0 +1,148 @@
+Attributes: Application, 0x117026d00, pid: 14671, label: 'Football Performance'
+Element subtree:
+ →Application, 0x117026d00, pid: 14671, label: 'Football Performance'
+    Window (Main), 0x117026e40, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x117026f80, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x1170248c0, {{0.0, 0.0}, {420.0, 912.0}}
+          Other, 0x117026300, {{0.0, 0.0}, {420.0, 912.0}}
+            Other, 0x117026440, {{0.0, 0.0}, {420.0, 912.0}}
+              Other, 0x117026580, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x117026a80, {{0.0, 0.0}, {420.0, 912.0}}
+                  Other, 0x117026bc0, {{0.0, 0.0}, {420.0, 912.0}}
+                    Other, 0x1170266c0, {{0.0, 0.0}, {420.0, 912.0}}
+                      Other, 0x117026800, {{0.0, 0.0}, {420.0, 912.0}}
+                        Other, 0x117026940, {{0.0, 0.0}, {420.0, 912.0}}
+                          Other, 0x117024a00, {{0.0, 0.0}, {420.0, 912.0}}
+                            Other, 0x117024b40, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x117024c80, {{0.0, 0.0}, {420.0, 912.0}}
+                                Other, 0x1170257c0, {{0.0, 0.0}, {420.0, 912.0}}
+                                  Other, 0x117025900, {{0.0, 0.0}, {420.0, 912.0}}
+                                    ScrollView, 0x117025b80, {{0.0, 0.0}, {420.0, 912.0}}
+                                      Other, 0x1170261c0, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x117025cc0, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x117026080, {{0.0, 0.0}, {420.0, 912.0}}
+                                        Other, 0x117025e00, {{0.0, 764.2}, {420.0, 147.8}}
+                                          Image, 0x117025f40, {{-120.0, 769.0}, {660.0, 286.0}}, identifier: 'AdditionalDimmingOverlay'
+                                          Other, 0x117025a40, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x117024f00, {{0.0, 764.2}, {420.0, 147.8}}
+                                          Other, 0x117025540, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x117025680, {{0.0, 764.2}, {420.0, 147.8}}
+                                            Other, 0x1170252c0, {{0.0, 764.2}, {420.0, 147.8}}
+                                      Other, 0x117025400, {{0.0, 68.0}, {420.0, 1753.7}}
+                                        StaticText, 0x117025040, {{20.0, 76.0}, {125.0, 36.0}}, label: 'Progress'
+                                        StaticText, 0x117025180, {{20.0, 136.0}, {121.3, 24.0}}, label: 'Training load'
+                                        Other, 0x117024dc0, {{36.0, 188.0}, {348.0, 140.0}}, label: 'Minutes played per week', value: 0 minutes, 0 minut...
+                                          Other, 0x117024640, {{36.0, 188.0}, {40.4, 122.0}}, label: 'Sep 6, 2026 at 12 AM to Sep 13, 2026 at 12 AM', value: 0
+                                          Other, 0x117024780, {{76.4, 188.0}, {40.4, 122.0}}, label: 'Sep 13, 2026 at 12 AM to Sep 20, 2026 at 12 AM', value: 0
+                                          Other, 0x1170243c0, {{116.8, 188.0}, {40.4, 122.0}}, label: 'Sep 20, 2026 at 12 AM to Sep 27, 2026 at 12 AM', value: 0
+                                          Other, 0x117024500, {{157.1, 188.0}, {40.4, 122.0}}, label: 'Sep 27, 2026 at 12 AM to Oct 4, 2026 at 12 AM', value: 0
+                                          Other, 0x117024140, {{197.5, 188.0}, {40.4, 122.0}}, label: 'Oct 4, 2026 at 12 AM to Oct 11, 2026 at 12 AM', value: 0
+                                          Other, 0x117024280, {{237.9, 188.0}, {40.4, 122.0}}, label: 'Oct 11, 2026 at 12 AM to Oct 18, 2026 at 12 AM', value: 0
+                                          Other, 0x117024000, {{278.2, 188.0}, {40.4, 122.0}}, label: 'Oct 18, 2026 at 12 AM to Oct 25, 2026 at 12 AM', value: 165
+                                          Other, 0x117027200, {{318.6, 188.0}, {40.4, 122.0}}, label: 'Oct 25, 2026 at 12 AM to Nov 1, 2026 at 12 AM', value: 60
+                                        StaticText, 0x117027340, {{36.0, 344.7}, {103.7, 56.7}}, identifier: 'coach-outings', label: '3, Sessions, 4 weeks'
+                                          Image, 0x117027480, {{37.3, 344.7}, {12.3, 11.3}}, identifier: 'calendar', label: 'Calendar'
+                                          StaticText, 0x1170275c0, {{36.0, 361.0}, {13.3, 24.0}}, label: '3'
+                                          StaticText, 0x117027700, {{36.0, 387.0}, {103.7, 14.3}}, label: 'Sessions, 4 weeks'
+                                        StaticText, 0x117027840, {{157.3, 343.0}, {69.7, 58.7}}, label: '2, Week streak'
+                                          Image, 0x117027980, {{158.3, 343.0}, {10.3, 13.3}}, identifier: 'flame.fill', label: 'Flame'
+                                          StaticText, 0x117027ac0, {{157.3, 361.3}, {13.3, 24.0}}, label: '2'
+                                          StaticText, 0x117027c00, {{157.3, 387.3}, {69.7, 14.3}}, label: 'Week streak'
+                                        StaticText, 0x117027d40, {{278.7, 344.0}, {101.7, 58.0}}, label: '60, Minutes this week'
+                                          Image, 0x117027e80, {{279.7, 344.0}, {12.7, 12.7}}, identifier: 'timer', label: 'Timer'
+                                          StaticText, 0x116e76440, {{278.7, 361.7}, {26.7, 24.0}}, label: '60'
+                                          StaticText, 0x116e76940, {{278.7, 387.7}, {101.7, 14.3}}, label: 'Minutes this week'
+                                        StaticText, 0x116e76a80, {{20.0, 442.0}, {164.3, 24.0}}, label: 'How to get better'
+                                        StaticText, 0x116e770c0, {{20.0, 478.0}, {380.0, 233.7}}, label: 'WORK ON · CONSISTENCY, Build a twice-a-week rhythm, 3 sessions in the last 4 weeks. Football fitness builds from regular exposure, so two or more sessions a week moves the needle fastest., Add a 25-minute conditioning day, On a non-football day: 10 min easy jog, 6 × 30 s strides with 90 s walk back, 5 min easy cool-down.'
+                                          Image, 0x116e752c0, {{36.0, 494.0}, {38.0, 38.0}}, identifier: 'calendar', label: 'Calendar'
+                                          StaticText, 0x116e74dc0, {{86.0, 494.0}, {160.3, 13.3}}, label: 'WORK ON · CONSISTENCY'
+                                          StaticText, 0x116e76d00, {{86.0, 510.3}, {228.3, 20.3}}, label: 'Build a twice-a-week rhythm'
+                                          StaticText, 0x116e76080, {{36.0, 544.0}, {320.3, 58.0}}, label: '3 sessions in the last 4 weeks. Football fitness builds from regular exposure, so two or more sessions a week moves the needle fastest.'
+                                          Image, 0x116e766c0, {{49.7, 627.3}, {15.3, 17.3}}, identifier: 'figure.soccer', label: 'figure.soccer'
+                                          StaticText, 0x116e74780, {{49.7, 627.0}, {267.0, 18.0}}, label: 'Add a 25-minute conditioning day'
+                                          StaticText, 0x116e761c0, {{48.0, 650.0}, {308.3, 33.7}}, label: 'On a non-football day: 10 min easy jog, 6 × 30 s strides with 90 s walk back, 5 min easy cool-down.'
+                                        StaticText, 0x116e76300, {{20.0, 723.7}, {380.0, 213.7}}, label: 'FOUNDATION · SPEED, Train repeated sprints, Matches are decided by how well you repeat short sprints late on., Repeated-sprint sets, Once a week after a warm-up: 2 sets of 6 × 20–30 m sprints, 20 s walk between reps, 4 min between sets.'
+                                          Image, 0x116e757c0, {{36.0, 739.7}, {38.0, 38.0}}, identifier: 'bolt.fill', label: 'Flash'
+                                          StaticText, 0x116e76800, {{86.0, 739.7}, {133.3, 13.3}}, label: 'FOUNDATION · SPEED'
+                                          StaticText, 0x116e75900, {{86.0, 756.0}, {174.7, 20.3}}, label: 'Train repeated sprints'
+                                          StaticText, 0x116e74b40, {{36.0, 789.7}, {347.7, 38.0}}, label: 'Matches are decided by how well you repeat short sprints late on.'
+                                          Image, 0x116e75f40, {{49.7, 853.0}, {15.3, 17.3}}, identifier: 'figure.soccer', label: 'figure.soccer'
+                                          StaticText, 0x116e75040, {{49.7, 852.6}, {176.0, 18.0}}, label: 'Repeated-sprint sets'
+                                          StaticText, 0x116e76bc0, {{48.0, 875.7}, {323.7, 33.7}}, label: 'Once a week after a warm-up: 2 sets of 6 × 20–30 m sprints, 20 s walk between reps, 4 min between sets.'
+                                        Button, 0x116e74f00, {{20.0, 949.3}, {380.0, 49.7}}, label: 'See your full plan'
+                                          Image, 0x116e75540, {{36.0, 964.7}, {13.0, 19.0}}, identifier: 'list.bullet.clipboard', label: 'list.bullet.clipboard'
+                                          StaticText, 0x116e76580, {{36.0, 964.7}, {146.3, 19.3}}, label: 'See your full plan'
+                                          Image, 0x116e75400, {{379.0, 969.0}, {6.3, 10.7}}, identifier: 'chevron.right', label: 'Forward'
+                                        StaticText, 0x116e74c80, {{20.0, 1023.0}, {65.3, 24.0}}, label: 'Trends'
+                                        Other, 0x116e75180, {{20.0, 1071.0}, {380.0, 72.0}}
+                                          SegmentedControl, 0x116e748c0, {{20.0, 1071.0}, {380.0, 31.0}}
+                                            Button, 0x116e74a00, {{20.0, 1071.0}, {190.0, 32.0}}, label: 'Distance', Selected
+                                            Button, 0x116e75e00, {{210.0, 1071.0}, {190.0, 32.0}}, label: 'Heart rate'
+                                          SegmentedControl, 0x116e77e80, {{20.0, 1112.0}, {380.0, 31.0}}
+                                            Button, 0x116e75b80, {{20.0, 1112.0}, {126.0, 32.0}}, label: '4 weeks', Selected
+                                            Button, 0x116e75cc0, {{146.0, 1112.0}, {127.0, 32.0}}, label: '12 weeks'
+                                            Button, 0x116e75a40, {{273.0, 1112.0}, {127.0, 32.0}}, label: 'All time'
+                                        StaticText, 0x116e77d40, {{36.0, 1185.7}, {159.7, 20.3}}, label: 'Distance per minute'
+                                        StaticText, 0x116e77480, {{295.0, 1183.0}, {89.0, 24.0}}, label: '93 m/min'
+                                        Other, 0x116e77840, {{36.0, 1219.0}, {348.0, 160.0}}, label: 'Distance per minute trend across recent sessions', value: 3 sessions
+                                          Other, 0x116e77980, {{90.0, 1219.0}, {27.0, 142.0}}, label: 'Oct 23, 2026 at 12:00 PM to Oct 23, 2026 at 6:00 PM', value: 93.3 to 93.3, 2 va...
+                                          Other, 0x116e77ac0, {{198.0, 1219.0}, {27.0, 142.0}}, label: 'Oct 24, 2026 at 12:00 PM to Oct 24, 2026 at 6:00 PM', value: 93.3 to 93.3, 2 va...
+                                          Other, 0x116e77700, {{306.0, 1219.0}, {27.0, 142.0}}, label: 'Oct 25, 2026 at 12:00 PM to Oct 25, 2026 at 6:00 PM', value: 93.3 to 93.3, 2 va...
+                                        StaticText, 0x116e77340, {{36.0, 1434.0}, {341.3, 18.3}}, label: 'Building your baseline — 2 of 3 valid sessions'
+                                        Image, 0x116e77200, {{35.3, 1507.3}, {13.0, 13.0}}, identifier: 'sparkle', label: 'sparkle'
+                                        StaticText, 0x116e775c0, {{57.7, 1505.3}, {274.0, 33.7}}, label: 'Distance ranged from 93 to 93 m/min across 3 sessions.'
+                                        StaticText, 0x116e77c00, {{36.0, 1593.0}, {149.0, 24.0}}, label: 'Recent sessions'
+                                        StaticText, 0x115eecdc0, {{36.0, 1636.0}, {83.0, 18.0}}, label: 'Sun, Oct 25'
+                                        StaticText, 0x115eeca00, {{317.7, 1636.0}, {66.3, 18.0}}, label: '93 m/min'
+                                        StaticText, 0x115eecc80, {{36.0, 1655.0}, {116.3, 14.3}}, label: '6:10 PM · Completed'
+                                        StaticText, 0x115eedcc0, {{36.0, 1687.7}, {79.3, 18.0}}, label: 'Sat, Oct 24'
+                                        StaticText, 0x115eec8c0, {{317.7, 1687.7}, {66.3, 18.0}}, label: '93 m/min'
+                                        StaticText, 0x115eee1c0, {{36.0, 1706.7}, {116.3, 14.3}}, label: '6:10 PM · Completed'
+                                        StaticText, 0x115eede00, {{36.0, 1739.3}, {74.0, 18.0}}, label: 'Fri, Oct 23'
+                                        StaticText, 0x115eecb40, {{317.7, 1739.3}, {66.3, 18.0}}, label: '93 m/min'
+                                        StaticText, 0x115eedb80, {{36.0, 1758.3}, {116.3, 14.3}}, label: '6:10 PM · Completed'
+                                      Other, 0x115eedf40, {{387.0, 62.0}, {30.0, 767.0}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                                        Other, 0x115eeda40, {{414.0, 65.0}, {3.0, 349.3}}
+                                      Other, 0x115eed900, {{387.0, 62.0}, {30.0, 767.0}}, label: 'Vertical scroll bar, 3 pages', value: 0%
+                                        Other, 0x115eee080, {{414.0, 65.0}, {3.0, 349.3}}
+                            Other, 0x115eed7c0, {{0.0, 0.0}, {420.0, 912.0}}
+                              Other, 0x115eed680, {{0.0, 0.0}, {420.0, 912.0}}
+                Other, 0x115eed540, {{0.0, 829.0}, {420.0, 83.0}}
+                  Other, 0x115eed400, {{0.0, 0.0}, {420.0, 912.0}}
+                    TabBar, 0x115eecf00, {{0.0, 829.0}, {420.0, 83.0}}, label: 'Tab Bar'
+                      Other, 0x115eed2c0, {{73.0, 829.0}, {274.0, 62.0}}
+                        Other, 0x115f4f200, {{73.0, 829.0}, {94.0, 54.0}}
+                        Other, 0x115f4fac0, {{73.0, 829.0}, {274.0, 62.0}}
+                          Button, 0x115f4f700, {{77.0, 833.0}, {94.0, 54.0}}, identifier: 'figure.run', label: 'Sessions'
+                            Image, 0x115f4f340, {{112.0, 838.3}, {24.7, 29.3}}, identifier: 'figure.run', label: 'Running'
+                          Button, 0x115f4f980, {{163.0, 833.0}, {94.0, 54.0}}, identifier: 'chart.bar.xaxis', label: 'Progress', Selected
+                            Image, 0x115f4fe80, {{194.0, 840.3}, {31.7, 25.3}}, identifier: 'chart.bar.xaxis', label: 'chart.bar.xaxis'
+                          Button, 0x115f4ee40, {{249.0, 833.0}, {94.0, 54.0}}, identifier: 'gearshape', label: 'Settings'
+                            Image, 0x115f4f840, {{282.0, 839.0}, {28.0, 28.0}}, identifier: 'gearshape.fill', label: 'gearshape.fill'
+                        Other, 0x115f4f480, {{163.0, 833.0}, {94.0, 54.0}}
+                          Other, 0x115f4f5c0, {{163.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x115f4f0c0, {{163.0, 833.0}, {94.0, 54.0}}
+                            Other, 0x115f4ef80, {{163.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x115f4a800, {{163.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x115f49a40, {{163.0, 833.0}, {94.0, 54.0}}
+                                  Other, 0x115f4a080, {{163.0, 833.0}, {94.0, 54.0}}
+                                Other, 0x115f4a300, {{163.0, 833.0}, {94.0, 54.0}}
+                              Other, 0x115f4b200, {{163.0, 833.0}, {94.0, 54.0}}
+                  Other, 0x115f4a580, {{0.0, 829.0}, {420.0, 83.0}}
+                    Other, 0x115f4a440, {{0.0, 829.0}, {420.0, 83.0}}
+                      Other, 0x115f4a6c0, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x115f4a1c0, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x115f49900, {{0.0, 829.0}, {420.0, 83.0}}
+                            Other, 0x115f4abc0, {{0.0, 829.0}, {420.0, 83.0}}
+                        Other, 0x115f4b0c0, {{0.0, 829.0}, {420.0, 83.0}}
+                          Other, 0x115f4af80, {{0.0, 829.0}, {420.0, 83.0}}
+    Window, 0x115f4aa80, {{0.0, 0.0}, {420.0, 912.0}}
+      Other, 0x115f4ae40, {{0.0, 0.0}, {420.0, 912.0}}
+        Other, 0x115f4ad00, {{0.0, 0.0}, {420.0, 912.0}}
+Path to element:
+ →Application, 0x117026d00, pid: 14671, label: 'Football Performance'
+Query chain:
+ →Find: Target Application 'com.prateekranka.footballperformance'
+  Output: {
+    Application, 0x115f4a940, pid: 14671, label: 'Football Performance'
+  }
