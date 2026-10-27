@@ -62,4 +62,3 @@ These product priorities assume the P0 recording/sync faults are fixed. All can 
 Estimated Actions should remain hidden until ≥80% precision across three unseen real sessions, with recall measured. Venue maps require new route capture and physical GPS evidence; draft sprint candidates require detector validation before presentation as running statistics.
 
 **#1 pick: the 15-minute work-pattern report.** It turns the strongest existing evidence—heart rate and distance—into something worth reviewing after every outing. For this RB/LB, opening-versus-closing output and repeated demanding stretches are more useful now than another raw-motion chart. Correct time alignment, visible gaps, and coverage labels can make the report informative without claiming a fatigue diagnosis, tactical knowledge, or exact football actions.
-

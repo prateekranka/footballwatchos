@@ -165,4 +165,3 @@ schemes:
       targets:
         - name: FootballPerformanceE2E
           parallelizable: false
-
