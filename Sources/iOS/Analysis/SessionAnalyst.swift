@@ -161,34 +161,42 @@ public enum SessionAnalystV1 {
         high: Double = 160,
         minimumEffortS: Double = 10
     ) -> WorkRestSummaryV1 {
-        let sorted = heartRate.sorted { $0.timestamp < $1.timestamp }
+        let sorted = heartRate.filter { $0.bpm.isFinite && (40...200).contains($0.bpm) }
+            .sorted { $0.timestamp < $1.timestamp }
         var efforts: [ClosedRange<Date>] = []
-        var inEffort = false
-        var effortStart = Date()
-        for i in sorted.indices {
-            let sample = sorted[i]
+        var effortStart: Date?
+        var lastHigh: Date?
+        func finishEffort() {
+            if let start = effortStart, let end = lastHigh, end.timeIntervalSince(start) >= minimumEffortS {
+                efforts.append(start...end)
+            }
+            effortStart = nil
+            lastHigh = nil
+        }
+        for index in sorted.indices {
+            let sample = sorted[index]
+            if index > 0 && sample.timestamp.timeIntervalSince(sorted[index - 1].timestamp) > 20 {
+                finishEffort()
+            }
             if sample.bpm > high {
-                if !inEffort {
-                    inEffort = true
-                    effortStart = sample.timestamp
-                }
-            } else if inEffort {
-                // End the effort at the midpoint between this and the last high sample.
-                let lastHigh = sorted[max(0, i - 1)].timestamp
-                inEffort = false
-                if lastHigh.timeIntervalSince(effortStart) >= minimumEffortS {
-                    efforts.append(effortStart...lastHigh)
-                }
+                if effortStart == nil { effortStart = sample.timestamp }
+                lastHigh = sample.timestamp
+            } else {
+                finishEffort()
             }
         }
-        if inEffort, let last = sorted.last {
-            efforts.append(effortStart...last.timestamp)
-        }
+        finishEffort()
 
         let work = efforts.reduce(0) { $0 + $1.upperBound.timeIntervalSince($1.lowerBound) }
         var rests: [Double] = []
         for i in efforts.indices.dropFirst() {
-            rests.append(efforts[i].lowerBound.timeIntervalSince(efforts[i - 1].upperBound))
+            let start = efforts[i - 1].upperBound
+            let end = efforts[i].lowerBound
+            let between = sorted.filter { $0.timestamp >= start && $0.timestamp <= end }
+            let contiguous = between.indices.dropFirst().allSatisfy {
+                between[$0].timestamp.timeIntervalSince(between[$0 - 1].timestamp) <= 20
+            }
+            if contiguous { rests.append(end.timeIntervalSince(start)) }
         }
         let rest = rests.reduce(0, +)
         let ratio: Double? = work > 0 ? rest / work : nil

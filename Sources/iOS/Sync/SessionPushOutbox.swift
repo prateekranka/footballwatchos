@@ -24,6 +24,7 @@ public actor SessionPushOutbox {
     private let stateURL: URL
     private var state: State
     private var repository: FileSessionRepository?
+    private var isPushing = false
 
     public init(
         repository: FileSessionRepository? = nil,
@@ -48,7 +49,9 @@ public actor SessionPushOutbox {
     }
 
     public func pushOne() async {
-        guard let sessionID = state.pending.first, let repository else { return }
+        guard !isPushing, let sessionID = state.pending.first, let repository else { return }
+        isPushing = true
+        defer { isPushing = false }
         do {
             // Read only the index record (digest + byte count) and the stored
             // file URL. Never fully decode the package here: a game package
@@ -77,9 +80,17 @@ public actor SessionPushOutbox {
                     package: package
                 )
             }
-            state.pending.removeFirst()
+            state.pending.removeAll { $0 == sessionID }
             if !state.pushed.contains(sessionID) { state.pushed.append(sessionID) }
             state.lastPushedUTC = Date()
+            state.lastError = nil
+            state.uploadDetail = nil
+        } catch SessionStoreErrorV1.sessionMissing {
+            state.pending.removeAll { $0 == sessionID }
+            state.lastError = nil
+            state.uploadDetail = nil
+        } catch FileSessionRepository.RepositoryError.sessionNotFound {
+            state.pending.removeAll { $0 == sessionID }
             state.lastError = nil
             state.uploadDetail = nil
         } catch {

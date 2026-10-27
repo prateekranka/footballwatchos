@@ -41,7 +41,7 @@ targets:
         PRODUCT_MODULE_NAME: FootballPerformanceWatch
         INFOPLIST_FILE: Resources/Watch/Info.plist
         GENERATE_INFOPLIST_FILE: false
-        CURRENT_PROJECT_VERSION: 33
+        CURRENT_PROJECT_VERSION: 40
         MARKETING_VERSION: 1.0.1
         SKIP_INSTALL: true
         TARGETED_DEVICE_FAMILY: 4
@@ -76,7 +76,7 @@ targets:
         PRODUCT_MODULE_NAME: FootballPerformance
         INFOPLIST_FILE: Resources/iOS/Info.plist
         GENERATE_INFOPLIST_FILE: false
-        CURRENT_PROJECT_VERSION: 33
+        CURRENT_PROJECT_VERSION: 40
         MARKETING_VERSION: 1.0.1
         SKIP_INSTALL: false
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -88,48 +88,58 @@ targets:
           CODE_SIGN_IDENTITY: "iPhone Distribution: Esha Bhoon (4JRB53LG5C)"
           PROVISIONING_PROFILE_SPECIFIER: "FootballPerformance b28 iOS Distribution"
 
-  FootballPerformanceTests:
-    type: bundle.unit-test
+  FootballPerformanceE2E:
+    type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "26.0"
     sources:
-      - path: Tests/SessionFoundation
-      - path: Tests/PhoneImport
+      - path: Tests/E2E
     dependencies:
       - target: FootballPerformance
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.e2e
         GENERATE_INFOPLIST_FILE: true
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Football Performance.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Football Performance"
-        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_TARGET_NAME: FootballPerformance
 
-  FootballPerformanceWatchTests:
-    type: bundle.unit-test
+  FootballPerformanceWatchUITests:
+    type: bundle.ui-testing
     platform: watchOS
     deploymentTarget: "26.0"
     sources:
-      - path: Tests/WatchTransfer
+      - path: Tests/WatchUI
     dependencies:
       - target: FootballPerformanceWatch
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.watchtests
+        PRODUCT_BUNDLE_IDENTIFIER: com.prateekranka.footballperformance.watchuitests
         GENERATE_INFOPLIST_FILE: true
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Football Performance Watch.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Football Performance Watch"
-        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_TARGET_NAME: FootballPerformanceWatch
+        DEVELOPMENT_TEAM: 4JRB53LG5C
 
 schemes:
+  FootballPerformanceWatchUITests:
+    build:
+      targets:
+        FootballPerformanceWatch: all
+        FootballPerformanceWatchUITests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      debugEnabled: false
+      targets:
+        - name: FootballPerformanceWatchUITests
+          parallelizable: false
+      commandLineArguments:
+        "-AppleLanguages (en)": true
+        "-AppleLocale en_US": true
+
   FootballPerformanceWatch:
     build:
       targets:
         FootballPerformanceWatch: all
     run:
       config: Debug
-    test:
-      config: Debug
-      targets:
-        - FootballPerformanceWatchTests
     archive:
       config: Release
 
@@ -142,24 +152,16 @@ schemes:
     test:
       config: Debug
       targets:
-        - FootballPerformanceTests
+        - FootballPerformanceE2E
     archive:
       config: Release
 
-  FootballPerformanceTests:
+  FootballPerformanceE2E:
     build:
       targets:
-        FootballPerformanceTests: all
+        FootballPerformanceE2E: all
     test:
       config: Debug
       targets:
-        - FootballPerformanceTests
-
-  FootballPerformanceWatchTests:
-    build:
-      targets:
-        FootballPerformanceWatchTests: all
-    test:
-      config: Debug
-      targets:
-        - FootballPerformanceWatchTests
+        - name: FootballPerformanceE2E
+          parallelizable: false

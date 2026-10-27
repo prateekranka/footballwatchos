@@ -267,3 +267,120 @@ public enum SessionTransferGzipV1 {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporaryURL)
     }
 }
+
+/// The player's maximum heart rate, sent from the iPhone (where the age is
+/// entered) to the Watch, which colors its live effort zones with it.
+public enum PlayerProfileContextV1 {
+    public static let maximumHeartRateKey = "playerMaxHeartRate"
+
+    /// Zero or missing means "not set"; the Watch then uses its fallback.
+    public static func maximumHeartRate(in context: [String: Any]) -> Double? {
+        guard let value = context[maximumHeartRateKey] as? Double,
+              value.isFinite, (100...230).contains(value) else { return nil }
+        return value
+    }
+}
+
+/// The sessions the iPhone holds or deleted on purpose, sent to the Watch.
+/// A receipt only proves an import into the iPhone library of that time; if
+/// the iPhone app is reinstalled its library starts empty, and without this
+/// list the Watch would never send those sessions again.
+public struct PhoneLibraryContextV1: Codable, Sendable, Equatable {
+    public static let knownSessionIDsKey = "phoneKnownSessionIDs"
+    public static let generatedAtKey = "phoneLibraryGeneratedAt"
+
+    public let knownSessionIDs: Set<UUID>
+    /// iPhone clock, like receipt times, so the Watch can tell which is newer.
+    public let generatedAt: Date
+
+    public init(knownSessionIDs: Set<UUID>, generatedAt: Date) {
+        self.knownSessionIDs = knownSessionIDs
+        self.generatedAt = generatedAt
+    }
+
+    public var contextEntries: [String: Any] {
+        [
+            Self.knownSessionIDsKey: knownSessionIDs.map(\.uuidString).sorted(),
+            Self.generatedAtKey: generatedAt.timeIntervalSince1970,
+        ]
+    }
+
+    public static func decode(context: [String: Any]) -> PhoneLibraryContextV1? {
+        guard let strings = context[knownSessionIDsKey] as? [String],
+              let seconds = context[generatedAtKey] as? Double,
+              seconds.isFinite else { return nil }
+        let sessionIDs = strings.compactMap(UUID.init(uuidString:))
+        guard sessionIDs.count == strings.count else { return nil }
+        return PhoneLibraryContextV1(
+            knownSessionIDs: Set(sessionIDs),
+            generatedAt: Date(timeIntervalSince1970: seconds)
+        )
+    }
+}
+
+/// The Watch's own count of its saved sessions and how far each got toward
+/// the iPhone. The iPhone cannot see transfers until a file lands, so without
+/// this it can only guess at what is still on the Watch.
+public struct WatchSyncStatusV1: Codable, Sendable, Equatable {
+    public static let contextKey = "watchSyncStatus"
+
+    /// Unique sessions saved on the Watch.
+    public let savedOnWatch: Int
+    /// Sessions the iPhone confirmed with an import receipt.
+    public let onIPhone: Int
+    /// Sessions queued, in flight, or not yet offered to the iPhone.
+    public let waiting: Int
+    /// Sessions whose last send failed; the next Watch launch retries them.
+    public let failed: Int
+    /// Interrupted recordings that need Recover on the Watch first.
+    public let needsRecovery: Int
+    public let notRequestedByPhone: Int?
+    public let lastTransferError: String?
+    public let updatedAt: Date
+
+    public init(
+        savedOnWatch: Int,
+        onIPhone: Int,
+        waiting: Int,
+        failed: Int,
+        needsRecovery: Int,
+        updatedAt: Date,
+        notRequestedByPhone: Int? = nil,
+        lastTransferError: String? = nil
+    ) {
+        self.savedOnWatch = savedOnWatch
+        self.onIPhone = onIPhone
+        self.waiting = waiting
+        self.failed = failed
+        self.needsRecovery = needsRecovery
+        self.updatedAt = updatedAt
+        self.notRequestedByPhone = notRequestedByPhone
+        self.lastTransferError = lastTransferError
+    }
+
+    /// Same counts, ignoring when they were taken.
+    public func hasSameCounts(as other: WatchSyncStatusV1) -> Bool {
+        savedOnWatch == other.savedOnWatch && onIPhone == other.onIPhone
+            && waiting == other.waiting && failed == other.failed
+            && needsRecovery == other.needsRecovery
+            && (notRequestedByPhone ?? 0) == (other.notRequestedByPhone ?? 0)
+            && lastTransferError == other.lastTransferError
+    }
+
+    public func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .secondsSince1970
+        return try encoder.encode(self)
+    }
+
+    public static func decode(_ data: Data) throws -> WatchSyncStatusV1 {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        return try decoder.decode(WatchSyncStatusV1.self, from: data)
+    }
+
+    public static func decode(context: [String: Any]) -> WatchSyncStatusV1? {
+        guard let data = context[contextKey] as? Data else { return nil }
+        return try? decode(data)
+    }
+}

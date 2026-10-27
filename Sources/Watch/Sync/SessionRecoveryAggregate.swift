@@ -86,6 +86,7 @@ struct SessionRecoveryLogEntryV1: Sendable, Equatable, Identifiable {
 /// failed record is truthfully "waiting for iPhone" because the pipeline is
 /// still working it.
 struct SessionRecoveryAggregateV1: Sendable, Equatable {
+    let savedSessionCount: Int
     /// Unique sessions with a `.partial` on disk (recovered or not).
     let interruptedCount: Int
     /// Unique interrupted sessions without a `<stem>.recovered.*` copy.
@@ -100,6 +101,7 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
     let waitingForIPhoneCount: Int
     /// Recovered sessions with at least one imported outbox receipt.
     let importedCount: Int
+    let notRequestedByPhoneCount: Int
     /// Recovered sessions whose outbox records are all retryable failures.
     let needsAttentionCount: Int
     /// True only when at least one source session exists, every interrupted
@@ -110,16 +112,19 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
     /// True when the home screen should draw attention to the recovery
     /// screen: source sessions exist and recovery/transfer work remains.
     var attentionRequired: Bool {
-        sourceSessionCount > 0 && !allSessionsTransferred
+        needsRecoveryCount > 0 || waitingForIPhoneCount > 0 || needsAttentionCount > 0
     }
 
     static func compute(
         discovered: [StoredSessionPackageV1],
-        outboxRecords: [WatchTransferOutboxRecordV1]
+        outboxRecords: [WatchTransferOutboxRecordV1],
+        excludingPartialFilename: String? = nil
     ) -> SessionRecoveryAggregateV1 {
         var interrupted = Set<UUID>()
         var recovered = Set<UUID>()
+        var saved = Set<UUID>()
         for package in discovered {
+            if package.kind == .partial, package.filename == excludingPartialFilename { continue }
             guard let sessionID = SessionRecoveryFilenameV1.sessionID(from: package.filename) else {
                 continue
             }
@@ -127,6 +132,7 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
             case .partial:
                 interrupted.insert(sessionID)
             case .sealed:
+                saved.insert(sessionID)
                 if SessionRecoveryFilenameV1.isRecoveredCopy(package.filename) {
                     recovered.insert(sessionID)
                 }
@@ -136,6 +142,7 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
         var imported = Set<UUID>()
         var active = Set<UUID>()
         var failed = Set<UUID>()
+        var notRequested = Set<UUID>()
         for record in outboxRecords {
             switch record.status {
             case .imported:
@@ -144,17 +151,20 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
                 active.insert(record.key.sessionID)
             case .retryableFailure:
                 failed.insert(record.key.sessionID)
+            case .notRequestedByPhone:
+                notRequested.insert(record.key.sessionID)
             }
         }
 
         // Only recovered sessions enter the transfer buckets. An unrecovered
         // partial counts solely against needsRecoveryCount.
         let importedSources = recovered.intersection(imported)
-        let waitingSources = recovered.subtracting(imported).filter { sessionID in
+        let waitingSources = recovered.subtracting(imported).subtracting(notRequested).filter { sessionID in
             active.contains(sessionID) || !failed.contains(sessionID)
         }
         let attentionSources = recovered
             .subtracting(imported)
+            .subtracting(notRequested)
             .subtracting(active)
             .intersection(failed)
 
@@ -165,14 +175,80 @@ struct SessionRecoveryAggregateV1: Sendable, Equatable {
             && recovered.isSubset(of: imported)
 
         return SessionRecoveryAggregateV1(
+            savedSessionCount: saved.count,
             interruptedCount: interrupted.count,
             needsRecoveryCount: needsRecovery.count,
             recoveredCount: recovered.count,
             sourceSessionCount: sources.count,
             waitingForIPhoneCount: waitingSources.count,
             importedCount: importedSources.count,
+            notRequestedByPhoneCount: recovered.intersection(notRequested).subtracting(imported).count,
             needsAttentionCount: attentionSources.count,
             allSessionsTransferred: allComplete
+        )
+    }
+}
+
+extension WatchSyncStatusV1 {
+    /// Counts unique original session UUIDs, like the recovery aggregate, so
+    /// recovered copies and repeat outbox records never inflate a number.
+    /// "On iPhone" needs a receipt; framework completion alone is waiting.
+    static func compute(
+        discovered: [StoredSessionPackageV1],
+        outboxRecords: [WatchTransferOutboxRecordV1],
+        excludingPartialFilename: String? = nil,
+        now: Date = Date()
+    ) -> WatchSyncStatusV1 {
+        var saved = Set<UUID>()
+        var interrupted = Set<UUID>()
+        var recovered = Set<UUID>()
+        for package in discovered {
+            if package.kind == .partial, package.filename == excludingPartialFilename { continue }
+            guard let sessionID = SessionRecoveryFilenameV1.sessionID(from: package.filename) else {
+                continue
+            }
+            switch package.kind {
+            case .partial:
+                interrupted.insert(sessionID)
+            case .sealed:
+                saved.insert(sessionID)
+                if SessionRecoveryFilenameV1.isRecoveredCopy(package.filename) {
+                    recovered.insert(sessionID)
+                }
+            }
+        }
+
+        var imported = Set<UUID>()
+        var active = Set<UUID>()
+        var failed = Set<UUID>()
+        var notRequested = Set<UUID>()
+        for record in outboxRecords {
+            switch record.status {
+            case .imported:
+                imported.insert(record.key.sessionID)
+            case .pending, .queued, .waitingForReceipt:
+                active.insert(record.key.sessionID)
+            case .retryableFailure:
+                failed.insert(record.key.sessionID)
+            case .notRequestedByPhone:
+                notRequested.insert(record.key.sessionID)
+            }
+        }
+
+        let notOnIPhone = saved.subtracting(imported).subtracting(notRequested)
+        let failedOnly = notOnIPhone.subtracting(active).intersection(failed)
+        return WatchSyncStatusV1(
+            savedOnWatch: saved.count,
+            onIPhone: saved.intersection(imported).count,
+            waiting: notOnIPhone.subtracting(failedOnly).count,
+            failed: failedOnly.count,
+            needsRecovery: interrupted.subtracting(recovered).count,
+            updatedAt: now,
+            notRequestedByPhone: saved.intersection(notRequested).subtracting(imported).count,
+            lastTransferError: outboxRecords
+                .filter { $0.status == .retryableFailure && failedOnly.contains($0.key.sessionID) }
+                .max(by: { $0.lastUpdatedAt < $1.lastUpdatedAt })
+                .flatMap { $0.lastError.map { String($0.prefix(1000)) } }
         )
     }
 }

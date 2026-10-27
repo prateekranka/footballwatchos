@@ -4,6 +4,7 @@ import SwiftUI
 struct FootballPerformanceApp: App {
     @StateObject private var library: PhoneSessionLibraryModel
     @AppStorage("onboardingCompleted") private var onboardingCompleted = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Build the local recipient and activate WCSession before the scene is
@@ -26,6 +27,11 @@ struct FootballPerformanceApp: App {
             #if DEBUG && targetEnvironment(simulator)
             .modifier(SimulatorQAEnvironment(model: library))
             #endif
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                PhoneTransferRuntime.shared.refreshConnection()
+            }
         }
     }
 }

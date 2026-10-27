@@ -3,11 +3,27 @@ import Combine
 import Foundation
 import WatchKit
 
+struct RecordingFinishGate {
+    private(set) var generation = UUID()
+    private var isSealing = false
+
+    mutating func invalidate() {
+        generation = UUID()
+        isSealing = false
+    }
+
+    mutating func claimSeal(for generation: UUID) -> Bool {
+        guard self.generation == generation, !isSealing else { return false }
+        isSealing = true
+        return true
+    }
+}
+
 struct FootballSessionSummary: Equatable, Sendable {
     let sessionID: UUID
     let transferKey: WatchTransferOutboxKeyV1?
     let duration: TimeInterval
-    let distanceMeters: Double
+    let distanceMeters: Double?
     let averageHeartRate: Double?
     let motion: MotionCaptureSnapshot
     let healthKitSaveOutcome: HealthKitSaveOutcomeV1
@@ -31,7 +47,8 @@ final class WorkoutRecorder: NSObject, ObservableObject {
 
     @Published private(set) var phase: Phase = .authorizing
     @Published private(set) var currentHeartRate: Double?
-    @Published private(set) var distanceMeters: Double = 0
+    @Published private(set) var distanceMeters: Double?
+    @Published private(set) var heartRateMeasuredAt: Date?
     @Published private(set) var averageHeartRate: Double?
     @Published private(set) var startedAt: Date?
     @Published var selectedSessionType: FootballSessionTypeV1 = .football
@@ -57,6 +74,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     private var repository: WatchSessionRepository?
     private var packageWriter: SessionPackageWriter?
     private var sessionID: UUID?
+    private var finishGate = RecordingFinishGate()
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private var countdownTask: Task<Void, Never>?
@@ -64,8 +82,13 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     private var finishingWatchdogTask: Task<Void, Never>?
     let launchRecoverySync: LaunchRecoverySync
     private var didRequestAuthorization = false
+    private var didSyncStoredSessions = false
     private var finishRequested = false
     private var storageQualityError: String?
+    private var captureGapMessage: String?
+    private var activeRecordingMarker: ActiveRecordingMarkerV1?
+    private var activeRecoveryTask: Task<Void, Never>?
+    private var didAttemptActiveRecovery = false
     private var stateGenerationObservation: AnyCancellable?
 
     /// Draft sprint detection; thresholds are validated via Calibration Sessions.
@@ -135,6 +158,16 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         }
 
         phase = .authorizing
+        recoverActiveWorkout()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.activeRecoveryTask?.value
+            guard self.phase == .authorizing else { return }
+            self.requestHealthAuthorization()
+        }
+    }
+
+    private func requestHealthAuthorization() {
         let shareTypes: Set<HKSampleType> = [HKObjectType.workoutType()]
         let readTypes: Set<HKObjectType> = [
             heartRateType,
@@ -147,9 +180,11 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             let failure = error?.localizedDescription
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard self.phase == .authorizing else { return }
                 if success {
                     WatchLog.recorder.info("prepare: HealthKit authorization granted")
                     self.phase = .idle
+                    self.syncStoredSessionsOnLaunch()
                     self.startUIQAAutomationIfRequested()
                 } else {
                     WatchLog.recorder.logError(
@@ -160,6 +195,159 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    /// Sealed sessions from an older build, or ones whose transfer ran out of
+    /// attempts, used to wait for a Recover tap. Re-offering a sealed package
+    /// is safe (the iPhone answers a duplicate with a receipt), so do it once
+    /// per launch. Partials stay button-driven: scanning them at launch risked
+    /// jetsam on long packages.
+    private func syncStoredSessionsOnLaunch() {
+        guard !didSyncStoredSessions, let repository else { return }
+        didSyncStoredSessions = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.syncCoordinator.renewFailedTransfers()
+                let tracked = await self.syncCoordinator.trackedPackageFilenames()
+                let untracked = try await repository.discover()
+                    .filter { $0.kind == .sealed && !tracked.contains($0.filename) }
+                WatchLog.recorder.info("launchSessionSync: \(untracked.count, privacy: .public) untracked sealed sessions")
+                for package in untracked {
+                    // A recording owns the CPU; the next launch picks up the rest.
+                    guard self.phase == .idle else { return }
+                    let url = repository.sessionsDirectory
+                        .appendingPathComponent(package.filename, isDirectory: false)
+                    await self.launchRecoverySync.submitDiscoveredPackage(at: url)
+                }
+            } catch {
+                WatchLog.recorder.logError("launchSessionSync failed", error: error)
+            }
+        }
+    }
+
+    func recoverActiveWorkout() {
+        guard didRequestAuthorization else {
+            prepare()
+            return
+        }
+        guard !didAttemptActiveRecovery, activeRecoveryTask == nil,
+              phase == .authorizing, let repository else { return }
+        didAttemptActiveRecovery = true
+        activeRecoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.activeRecoveryTask = nil }
+            do {
+                await self.recordDiagnostic("active_recovery_marker_requested")
+                let marker = try await repository.activeRecording()
+                self.activeRecordingMarker = marker
+                if marker != nil { self.phase = .starting }
+                await self.recordDiagnostic("active_recovery_health_requested", armed: marker == nil ? nil : true)
+                let (recoveredSession, recoveryError): (HKWorkoutSession?, String?) = await withCheckedContinuation { continuation in
+                    self.healthStore.recoverActiveWorkoutSession { session, error in
+                        let diagnosticError = Self.diagnosticErrorCode(error)
+                        Task { @MainActor in
+                            continuation.resume(returning: (session, diagnosticError))
+                        }
+                    }
+                }
+                await self.recordDiagnostic("active_recovery_health_returned", detail: recoveryError)
+                guard recoveryError == nil, let recoveredSession else {
+                    await self.abandonActiveRecovery(repository, reason: recoveryError ?? "no_active_workout")
+                    return
+                }
+                let recoveredBuilder = recoveredSession.associatedWorkoutBuilder()
+                let metadataValue = recoveredBuilder.metadata["com.prateekranka.footballperformance.session-id"]
+                let metadataID = (metadataValue as? String).flatMap(UUID.init(uuidString:))
+                guard metadataValue == nil || metadataID != nil,
+                      let recoveredID = metadataID ?? marker?.sessionID,
+                      marker == nil || metadataID == nil || marker?.sessionID == metadataID else {
+                    await self.abandonActiveRecovery(repository, reason: "session_id_mismatch_or_missing")
+                    return
+                }
+                guard recoveredSession.state == .running || recoveredSession.state == .paused else {
+                    await self.abandonActiveRecovery(repository, reason: "workout_no_longer_active")
+                    return
+                }
+                self.phase = .starting
+                self.finishGate.invalidate()
+                self.cancelFinishingWatchdog()
+                self.session = recoveredSession
+                self.builder = recoveredBuilder
+                recoveredSession.delegate = self
+                recoveredBuilder.delegate = self
+                if recoveredBuilder.dataSource == nil {
+                    recoveredBuilder.dataSource = HKLiveWorkoutDataSource(
+                        healthStore: self.healthStore,
+                        workoutConfiguration: recoveredSession.workoutConfiguration
+                    )
+                }
+                await self.recordDiagnostic("active_recovery_identity_verified", armed: true)
+                await self.recordDiagnostic("active_recovery_writer_requested")
+                let writer = try await repository.resumeWriter(sessionID: recoveredID)
+                self.packageWriter = writer
+                self.sessionID = recoveredID
+                await self.recordDiagnostic("active_recovery_writer_reopened")
+                let envelope = writer.envelope
+                let restoredMarker = ActiveRecordingMarkerV1(envelope: envelope)
+                try await repository.writeActiveRecording(restoredMarker)
+                self.activeRecordingMarker = restoredMarker
+                self.startedAt = envelope.startedAt
+                self.selectedSessionType = marker?.sessionType ?? envelope.footballType
+                self.finishRequested = false
+                self.storageQualityError = nil
+                self.sprintDetector.reset()
+                self.lastSprintFlush = nil
+                let resumedAt = Date()
+                let lastRecordedAt = writer.lastRecordedAtBeforeResume ?? envelope.startedAt
+                self.captureGapMessage = "Motion capture had a gap while the app restarted."
+                await self.recordDiagnostic("active_recovery_gap_requested")
+                try await writer.appendQualityEvent(
+                    CaptureQualityEventV1(
+                        timestamp: resumedAt,
+                        level: .warning,
+                        code: "capture_resumed_after_relaunch",
+                        detail: "Last recorded timestamp: \(lastRecordedAt.ISO8601Format()). Resumed at: \(resumedAt.ISO8601Format())."
+                    )
+                )
+                await self.recordDiagnostic("active_recovery_gap_recorded")
+                guard recoveredSession.state == .running || recoveredSession.state == .paused else {
+                    await self.abandonActiveRecovery(repository, reason: "workout_ended_during_recovery")
+                    return
+                }
+                if recoveredSession.state == .paused { recoveredSession.resume() }
+                let motionPlan = self.motionCapture.makeCapturePlan()
+                await self.recordDiagnostic("active_recovery_motion_requested")
+                guard recoveredSession.state == .running || recoveredSession.state == .paused else {
+                    await self.abandonActiveRecovery(repository, reason: "workout_ended_before_motion_restart")
+                    return
+                }
+                self.motionCapture.start(writer: writer, plan: motionPlan)
+                self.phase = .active
+                self.updateStatistics(for: [self.heartRateType.identifier, self.distanceType.identifier])
+                WKInterfaceDevice.current().play(.click)
+                await self.recordDiagnostic("active_recovery_motion_started")
+                await self.recordDiagnostic("active_recovery_ready")
+                await self.refreshRecoveryAggregate()
+            } catch {
+                await self.abandonActiveRecovery(repository, reason: Self.diagnosticErrorCode(error) ?? "recovery_failed")
+            }
+        }
+    }
+
+    private func abandonActiveRecovery(_ repository: WatchSessionRepository, reason: String) async {
+        await recordDiagnostic("active_recovery_fallback", detail: reason, armed: false)
+        do {
+            try await repository.clearActiveRecording()
+        } catch {
+            await recordDiagnostic("active_recovery_marker_removal_failed", detail: Self.diagnosticErrorCode(error))
+        }
+        session?.delegate = nil
+        builder?.delegate = nil
+        clearSessionState()
+        activeRecordingMarker = nil
+        phase = .authorizing
+        await refreshRecoveryAggregate()
     }
 
     /// Simulator QA hook, DEBUG builds only. `FP_UI_QA_AUTOSTART=1` begins
@@ -188,7 +376,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     #endif
 
     func startCountdown() {
-        guard phase == .idle else { return }
+        guard phase == .idle, !isRecovering else { return }
         countdownTask?.cancel()
         countdownTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -228,18 +416,23 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         finishRequested = true
         phase = .finishing
         let endDate = Date()
-        beginFinishingWatchdog()
+        let generation = finishGate.generation
+        beginFinishingWatchdog(generation: generation)
 
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.isCurrentFinish(generation) else { return }
             await self.recordDiagnostic("finish_requested")
+            guard self.isCurrentFinish(generation) else { return }
             let motionResult = await self.motionCapture.stopAndDrain()
+            guard self.isCurrentFinish(generation) else { return }
             await self.metricTail?.value
+            guard self.isCurrentFinish(generation) else { return }
             session.end()
             builder.endCollection(withEnd: endDate) { [weak self] success, error in
                 let errorDescription = error?.localizedDescription
                 Task { @MainActor [weak self] in
                     self?.handleEndCollection(
+                        generation: generation,
                         success: success,
                         errorDescription: errorDescription,
                         builder: builder,
@@ -267,6 +460,15 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     func elapsed(at date: Date) -> TimeInterval {
         guard let startedAt else { return 0 }
         return max(0, date.timeIntervalSince(startedAt))
+    }
+
+    func heartRate(at date: Date) -> Double? {
+        Self.freshHeartRate(currentHeartRate, measuredAt: heartRateMeasuredAt, at: date)
+    }
+
+    static func freshHeartRate(_ value: Double?, measuredAt: Date?, at date: Date) -> Double? {
+        guard let measuredAt, date.timeIntervalSince(measuredAt) <= 30 else { return nil }
+        return value
     }
 
     private func beginWorkout() async {
@@ -304,6 +506,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             self.builder = builder
             self.finishRequested = false
             self.storageQualityError = nil
+            self.captureGapMessage = nil
 
             // The durable package is created BEFORE the workout session
             // starts. File creation and the initial synchronize are the only
@@ -327,6 +530,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             )
 
             let writer: SessionPackageWriter
+            self.activeRecordingMarker = ActiveRecordingMarkerV1(envelope: envelope)
             do {
                 writer = try await repository.startWriter(envelope: envelope)
             } catch {
@@ -345,6 +549,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             }
             self.packageWriter = writer
             self.sessionID = sessionID
+            finishGate.invalidate()
             sprintDetector.reset()
             lastSprintFlush = nil
             await recordDiagnostic("package_writer_created")
@@ -360,6 +565,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 let diagnosticError = Self.diagnosticErrorCode(error)
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    guard self.session === session, self.builder === builder, self.phase == .starting else { return }
                     guard success else {
                         WatchLog.recorder.logError(
                             "beginWorkout: beginCollection failed",
@@ -457,7 +663,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         startDate: Date,
         metadataError: String?
     ) async {
-        guard phase == .starting, packageWriter != nil else { return }
+        guard phase == .starting, packageWriter === writer else { return }
         if let metadataError {
             do {
                 try await writer.appendQualityEvent(
@@ -473,13 +679,14 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             }
         }
 
+        guard phase == .starting, packageWriter === writer else { return }
         startedAt = startDate
         await recordDiagnostic("active_phase_requested")
-        phase = .active
-        await recordDiagnostic("active_phase_entered")
         await recordDiagnostic("motion_start_requested")
         motionCapture.start(writer: writer, plan: motionPlan)
+        phase = .active
         await recordDiagnostic("motion_start_returned")
+        await recordDiagnostic("active_phase_entered")
         await recordDiagnostic("start_haptic_requested")
         WKInterfaceDevice.current().play(.start)
         await recordDiagnostic("start_haptic_returned")
@@ -487,15 +694,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     }
 
     private func handleEndCollection(
+        generation: UUID,
         success: Bool,
         errorDescription: String?,
         builder: HKLiveWorkoutBuilder,
         endDate: Date,
         motionResult: MotionCaptureDrainResult
     ) {
+        guard isCurrentFinish(generation) else { return }
         guard success else {
             Task { @MainActor [weak self] in
                 await self?.sealPackage(
+                    generation: generation,
                     builder: builder,
                     workout: nil,
                     endDate: endDate,
@@ -521,6 +731,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                     healthOutcome = .saved(workoutUUID: workout?.uuid)
                 }
                 await self.sealPackage(
+                    generation: generation,
                     builder: builder,
                     workout: workout,
                     endDate: endDate,
@@ -537,6 +748,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     /// is recorded separately, so its failure never erases a recoverable local
     /// session package.
     private func sealPackage(
+        generation: UUID,
         builder: HKLiveWorkoutBuilder,
         workout: HKWorkout?,
         endDate: Date,
@@ -545,6 +757,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         requestedLifecycle: SessionLifecycleV1,
         additionalQualityError: String?
     ) async {
+        guard isCurrentFinish(generation), finishGate.claimSeal(for: generation) else { return }
         guard let writer = packageWriter, let sessionID else {
             phase = .failed("Private session storage was unavailable before the session could be sealed.")
             return
@@ -577,7 +790,9 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 qualityMessages.append(error.localizedDescription)
             }
         }
+        if let captureGapMessage { qualityMessages.append(captureGapMessage) }
 
+        guard isCurrentFinish(generation) else { return }
         do {
             try await writer.appendCaptureDiagnostics(motionResult.diagnostics)
         } catch {
@@ -586,6 +801,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         }
 
         // Seal sprint detection results before the completion frame.
+        guard isCurrentFinish(generation) else { return }
         drainDetectorMagnitudes()
         let finalSprintBatch = sprintDetector.finalBatch()
         if !finalSprintBatch.events.isEmpty {
@@ -597,6 +813,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
             }
         }
 
+        guard isCurrentFinish(generation) else { return }
         let lifecycle: SessionLifecycleV1
         if storageErrors.isEmpty {
             lifecycle = requestedLifecycle
@@ -613,33 +830,40 @@ final class WorkoutRecorder: NSObject, ObservableObject {
 
         let sealedURL: URL
         do {
-            sealedURL = try await writer.complete(completion)
+            guard let repository else { throw CocoaError(.fileNoSuchFile) }
+            sealedURL = try await repository.completeWriter(writer, completion: completion)
         } catch {
+            guard isCurrentFinish(generation) else { return }
             WatchLog.recorder.logError("sealPackage: complete() failed", error: error)
             await recordDiagnostic(
                 "package_seal_failed",
                 detail: Self.diagnosticErrorCode(error),
                 armed: false
             )
+            guard isCurrentFinish(generation) else { return }
             phase = .failed("Private session storage could not be sealed: \(error.localizedDescription)")
             WKInterfaceDevice.current().play(.failure)
             return
         }
 
+        guard isCurrentFinish(generation) else { return }
+        self.activeRecordingMarker = nil
         await recordDiagnostic("package_sealed", armed: false)
+        guard isCurrentFinish(generation) else { return }
         WatchLog.recorder.info(
             "sealPackage: sealed \(sealedURL.lastPathComponent, privacy: .public)"
         )
         let syncResult = await syncCoordinator.enqueueSealedPackage(at: sealedURL)
+        guard isCurrentFinish(generation) else { return }
         let summary = FootballSessionSummary(
             sessionID: sessionID,
             transferKey: syncResult.key,
             duration: packageSummary.duration?.value ?? 0,
-            distanceMeters: packageSummary.distance?.value ?? 0,
+            distanceMeters: packageSummary.distance?.value,
             averageHeartRate: packageSummary.averageHeartRate?.value,
             motion: motionResult.snapshot,
             healthKitSaveOutcome: healthOutcome,
-            captureQualityError: qualityMessages.first
+            captureQualityError: qualityMessages.isEmpty ? nil : qualityMessages.joined(separator: " ")
         )
         self.session = nil
         self.builder = nil
@@ -662,7 +886,8 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         let builderEnergy = builder.statistics(for: activeEnergyType)?.sumQuantity()?.doubleValue(for: .kilocalorie())
         let finalDistance = workout?.totalDistance?.doubleValue(for: .meter()) ?? builderDistance
         let finalEnergy = workout?.totalEnergyBurned?.doubleValue(for: .kilocalorie()) ?? builderEnergy
-        let duration = workout?.duration ?? builder.elapsedTime(at: endDate)
+        let duration = startedAt.map { endDate.timeIntervalSince($0) }
+            ?? workout?.duration ?? builder.elapsedTime(at: endDate)
         let provenance: MetricProvenanceV1 = workout == nil ? .healthKitLive : .healthKitFinalWorkout
 
         return SessionSummaryMetricsV1(
@@ -680,7 +905,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     }
 
     private func updateStatistics(for identifiers: [String]) {
-        guard let builder, let writer = packageWriter else { return }
+        guard phase == .active, let builder, let writer = packageWriter else { return }
         let timestamp = Date()
         let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
 
@@ -690,6 +915,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
                 guard let statistics = builder.statistics(for: heartRateType) else { continue }
                 let mostRecent = statistics.mostRecentQuantity()?.doubleValue(for: heartRateUnit)
                 currentHeartRate = mostRecent
+                heartRateMeasuredAt = mostRecent == nil ? nil : statistics.mostRecentQuantityDateInterval()?.end
                 averageHeartRate = statistics.averageQuantity()?.doubleValue(for: heartRateUnit)
                 if let mostRecent {
                     sprintDetector.consumeHeartRate(beatsPerMinute: mostRecent, at: timestamp)
@@ -740,6 +966,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     /// Append a sprint batch at most once per minute while the session is
     /// active, so sprint events survive an interrupted seal.
     private func flushSprintsIfDue(writer: SessionPackageWriter, now: Date) async {
+        guard phase == .active, packageWriter === writer else { return }
         if let lastSprintFlush, now.timeIntervalSince(lastSprintFlush) < 60 {
             return
         }
@@ -784,14 +1011,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         WatchLog.recorder.warning("handleSessionEndedUnexpectedly: sealing interrupted package")
         finishRequested = true
         phase = .finishing
-        beginFinishingWatchdog()
+        let generation = finishGate.generation
+        beginFinishingWatchdog(generation: generation)
         let endDate = Date()
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.isCurrentFinish(generation) else { return }
             await self.recordDiagnostic("workout_ended_unexpectedly")
+            guard self.isCurrentFinish(generation) else { return }
             let motionResult = await self.motionCapture.stopAndDrain()
+            guard self.isCurrentFinish(generation) else { return }
             await self.metricTail?.value
             await self.sealPackage(
+                generation: generation,
                 builder: builder,
                 workout: nil,
                 endDate: endDate,
@@ -809,12 +1040,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     /// The frames are already durable in the `.partial` package by this point,
     /// so the fail-safe surfaces an honest failure; the next launch's audit
     /// recovers the partial and queues it for iPhone transfer.
-    private func beginFinishingWatchdog() {
+    private func isCurrentFinish(_ generation: UUID) -> Bool {
+        phase == .finishing && finishGate.generation == generation
+    }
+
+    private func beginFinishingWatchdog(generation: UUID) {
         cancelFinishingWatchdog()
         finishingWatchdogTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Self.finishingWatchdogTimeout * 1_000_000_000))
-            guard !Task.isCancelled, let self, case .finishing = self.phase else { return }
+            guard !Task.isCancelled, let self, self.isCurrentFinish(generation) else { return }
             await self.recordDiagnostic("finishing_watchdog_fired", armed: false)
+            guard !Task.isCancelled, self.isCurrentFinish(generation) else { return }
+            self.finishGate.invalidate()
             WatchLog.recorder.error("finishingWatchdog: finish did not complete in \(Self.finishingWatchdogTimeout, privacy: .public)s")
             WKInterfaceDevice.current().play(.failure)
             self.phase = .failed(
@@ -847,9 +1084,18 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         }
         do {
             let discovered = try await repository.discover()
+            let records = syncCoordinator.outboxRecords()
             recoveryAggregate = SessionRecoveryAggregateV1.compute(
                 discovered: discovered,
-                outboxRecords: syncCoordinator.outboxRecords()
+                outboxRecords: records,
+                excludingPartialFilename: protectedPartialFilename
+            )
+            syncCoordinator.publish(
+                WatchSyncStatusV1.compute(
+                    discovered: discovered,
+                    outboxRecords: records,
+                    excludingPartialFilename: protectedPartialFilename
+                )
             )
         } catch {
             recoveryAggregate = nil
@@ -861,12 +1107,13 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     /// tap, guarded by checkpoints so any death during the work lands in the
     /// diagnostic journal the phone can read.
     func recoverInterruptedSessionsNow() {
-        guard !isRecovering, let repository else { return }
+        guard !isRecovering, activeRecoveryTask == nil, let repository else { return }
         isRecovering = true
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.isRecovering = false }
             do {
+                try await self.syncCoordinator.retryFailedTransfers()
                 let discovered = try await repository.discover()
                 var messages: [String] = []
                 var entries: [SessionRecoveryLogEntryV1] = []
@@ -899,9 +1146,10 @@ final class WorkoutRecorder: NSObject, ObservableObject {
 
                 let partialPackages = discovered.filter { $0.kind == .partial }
                 for package in partialPackages {
+                    guard package.filename != self.protectedPartialFilename else { continue }
                     do {
                         let recovered: RecoveredSessionPackageV1
-                        if let existing = LaunchRecoverySync.recoveredFilename(
+                        if let existing = try await repository.validatedRecoveredFilename(
                             forPartialNamed: package.filename,
                             discovered: discovered
                         ) {
@@ -983,6 +1231,15 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         WKInterfaceDevice.current().play(.failure)
     }
 
+    private var protectedPartialFilename: String? {
+        switch phase {
+        case .active, .starting, .finishing:
+            return activeRecordingMarker?.partialFilename ?? packageWriter?.partialURL.lastPathComponent
+        default:
+            return nil
+        }
+    }
+
     private func recordDiagnostic(
         _ code: String,
         detail: String? = nil,
@@ -1010,6 +1267,7 @@ final class WorkoutRecorder: NSObject, ObservableObject {
     }
 
     private func clearSessionState() {
+        finishGate.invalidate()
         countdownTask?.cancel()
         countdownTask = nil
         motionCapture.stop()
@@ -1020,11 +1278,14 @@ final class WorkoutRecorder: NSObject, ObservableObject {
         sessionID = nil
         metricTail = nil
         currentHeartRate = nil
+        heartRateMeasuredAt = nil
         averageHeartRate = nil
-        distanceMeters = 0
+        distanceMeters = nil
         startedAt = nil
         finishRequested = false
         storageQualityError = nil
+        captureGapMessage = nil
+        activeRecordingMarker = nil
     }
 }
 
@@ -1037,6 +1298,7 @@ extension WorkoutRecorder: HKWorkoutSessionDelegate {
     ) {
         guard toState == .ended else { return }
         Task { @MainActor [weak self] in
+            guard self?.session === workoutSession else { return }
             self?.handleSessionEndedUnexpectedly()
         }
     }
@@ -1046,6 +1308,7 @@ extension WorkoutRecorder: HKWorkoutSessionDelegate {
         didFailWithError error: any Error
     ) {
         Task { @MainActor [weak self] in
+            guard self?.session === workoutSession else { return }
             self?.handleSessionEndedUnexpectedly()
         }
     }
@@ -1062,6 +1325,7 @@ extension WorkoutRecorder: HKLiveWorkoutBuilderDelegate {
             ($0 as? HKQuantityType)?.identifier
         }
         Task { @MainActor [weak self] in
+            guard self?.builder === workoutBuilder else { return }
             self?.updateStatistics(for: identifiers)
         }
     }

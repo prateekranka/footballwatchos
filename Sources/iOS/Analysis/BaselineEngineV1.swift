@@ -46,11 +46,12 @@ enum ChartPreparationV1 {
     static func segments(
         from snapshots: [(timestamp: Date, value: Double)],
         maximumGapSeconds: Double = ChartPreparationV1.maximumGapSeconds,
-        maximumPoints: Int = ChartPreparationV1.maximumPoints
+        maximumPoints: Int = ChartPreparationV1.maximumPoints,
+        relativeTo sessionStart: Date? = nil
     ) -> [Segment] {
         guard !snapshots.isEmpty else { return [] }
         let sorted = snapshots.sorted { $0.timestamp < $1.timestamp }
-        let origin = sorted[0].timestamp
+        let origin = sessionStart ?? sorted[0].timestamp
 
         var runs: [[(timestamp: Date, value: Double)]] = [[sorted[0]]]
         for sample in sorted.dropFirst() {
@@ -146,25 +147,22 @@ enum BaselineEngineV1 {
 
     /// Deterministic validity gate for baseline and trend work.
     static func isValidSession(_ record: FileSessionRepository.SessionRecord) -> Bool {
-        guard !record.isManualEntry else { return false }
-        guard record.completion.lifecycle == .completed else { return false }
-        guard let summary = record.completion.summary else { return false }
-        guard let duration = summary.duration, duration.value >= minimumDurationSeconds else { return false }
-        guard summary.distance != nil else { return false }
+        guard !record.isManualEntry, record.completion.lifecycle == .completed,
+              record.sessionEnvelope.footballType != .calibration,
+              record.sessionEnvelope.footballType != .training,
+              let duration = record.evidence?.durationSeconds,
+              duration >= minimumDurationSeconds else { return false }
         return true
     }
 
-    /// Distance per minute for one session, from recorded summary values.
-    /// Returns `nil` when either value is missing, so a missing metric is
-    /// never displayed as zero.
     static func distancePerMinute(_ record: FileSessionRepository.SessionRecord) -> Double? {
-        guard let summary = record.completion.summary,
-              let distance = summary.distance?.value,
-              let duration = summary.duration?.value,
-              duration > 0, distance >= 0 else {
-            return nil
-        }
-        return distance / duration * 60
+        guard isValidSession(record) else { return nil }
+        return record.evidence?.distancePerMinute
+    }
+
+    static func averageHeartRate(_ record: FileSessionRepository.SessionRecord) -> Double? {
+        guard isValidSession(record) else { return nil }
+        return record.evidence?.averageHeartRate
     }
 
     enum BaselineStatus: Equatable, Sendable {
@@ -194,7 +192,7 @@ enum BaselineEngineV1 {
             case .distancePerMinute:
                 return distancePerMinute(record)
             case .averageHeartRate:
-                return record.completion.summary?.averageHeartRate?.value
+                return averageHeartRate(record)
             }
         }
 

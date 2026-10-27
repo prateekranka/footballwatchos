@@ -15,11 +15,18 @@ struct AddSessionView: View {
         NavigationStack {
             Form {
                 Section {
-                    Label("Manual session", systemImage: "square.and.pencil")
-                        .font(.headline)
-                    Text("Log a session you played. Your watch records sensor readings; a manual log stores only the details you enter.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 12) {
+                        IconBadge(systemName: sessionType.symbolName, tint: PerformanceTheme.accent, size: 44)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Manual session")
+                                .font(.headline)
+                            Text("Log a session you played. Your watch records sensor readings; a manual log stores only the details you enter.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
                 }
 
                 Section("Session details") {
@@ -41,6 +48,7 @@ struct AddSessionView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { durationFocused = true }
+                    durationPresets
                     DatePicker("Started", selection: $startedAt, in: ...Date.now)
                         .accessibilityIdentifier("session-start")
                 }
@@ -81,6 +89,32 @@ struct AddSessionView: View {
         #if DEBUG && targetEnvironment(simulator)
         .modifier(SimulatorQAEnvironment(model: model))
         #endif
+    }
+
+    private var durationPresets: some View {
+        HStack(spacing: 8) {
+            ForEach([30, 45, 60, 90], id: \.self) { minutes in
+                let selected = durationText == "\(minutes)"
+                Button {
+                    durationText = "\(minutes)"
+                    durationFocused = false
+                } label: {
+                    Text("\(minutes) min")
+                        .font(.footnote.weight(.semibold))
+                        .monospacedDigit()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            selected ? PerformanceTheme.accent : PerformanceTheme.accent.opacity(0.10),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(selected ? PerformanceTheme.onAccent : PerformanceTheme.accent)
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("\(minutes) minutes")
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
     }
 
     private var durationInput: some View {

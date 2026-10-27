@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/mobile';
 import { expect } from 'e2e';
-import { addManual, explore, fixture, latest, openFresh, tab } from './support/football-ui.ts';
+import { addManual, dismissPopover, explore, fixture, latest, openFresh, tab } from './support/football-ui.ts';
 
 test('native pickers, sync sheets, diagnostics, and sharing have screen evidence', async ui => {
   const { app, screen } = ui;
@@ -31,6 +31,9 @@ test('native pickers, sync sheets, diagnostics, and sharing have screen evidence
   await screen.getByRole('button', 'Share verified package', { exact: true }).getByText('Share verified package', { exact: true }).tap();
   await expect(screen.getByTestId('ActivityListView')).toBeVisible();
   await app.screenshot('native-share-sheet');
+  await dismissPopover(screen, screen.getByTestId('ActivityListView'));
+  await expect(screen.getByTestId('ActivityListView')).toBeHidden();
+  await expect(screen.getByRole('button', 'Share verified package', { exact: true })).toBeVisible();
   await app.restart();
   await tab(screen, 'Settings').tap();
   await screen.getByRole('button', /^Appearance,/).getByText('System', { exact: true }).tap();

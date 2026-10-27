@@ -31,6 +31,8 @@ public actor SessionPackageWriter {
 
     public let partialURL: URL
     public let sessionID: UUID
+    public let envelope: SessionEnvelopeV1
+    public let lastRecordedAtBeforeResume: Date?
 
     private let fileManager: FileManager
     private let limits: SessionPackageReaderLimitsV1
@@ -80,6 +82,8 @@ public actor SessionPackageWriter {
 
         self.partialURL = partialURL
         self.sessionID = envelope.sessionID
+        self.envelope = envelope
+        self.lastRecordedAtBeforeResume = nil
         self.fileManager = fileManager
         self.limits = limits
         self.policy = policy
@@ -122,6 +126,58 @@ public actor SessionPackageWriter {
 
     public func appendAccelerometerBatch(_ batch: AccelerometerBatchV1) throws {
         try append(.accelerometerBatch(batch))
+    }
+
+    public static func resume(
+        partialURL: URL,
+        sessionID: UUID,
+        policy: SynchronizationPolicy = .default,
+        limits: SessionPackageReaderLimitsV1 = .default
+    ) throws -> SessionPackageWriter {
+        guard partialURL.lastPathComponent == "\(sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)" else {
+            throw SessionPackageError.sessionIdentityMismatch
+        }
+        let scan = try FootySessionPackageV1.scanStructure(of: partialURL, limits: limits)
+        guard let envelope = scan.envelope else { throw SessionPackageError.missingSessionEnvelope }
+        guard envelope.sessionID == sessionID else { throw SessionPackageError.sessionIdentityMismatch }
+        guard scan.completion == nil else { throw SessionPackageError.writerIsSealed }
+        let handle = try FileHandle(forWritingTo: partialURL)
+        do {
+            if scan.status == .tornTail {
+                try handle.truncate(atOffset: scan.validPrefixByteCount)
+            }
+            try handle.seek(toOffset: scan.validPrefixByteCount)
+            return SessionPackageWriter(
+                partialURL: partialURL,
+                envelope: envelope,
+                lastRecordedAt: scan.lastRecordedAt,
+                handle: handle,
+                policy: policy,
+                limits: limits
+            )
+        } catch {
+            try? handle.close()
+            throw error
+        }
+    }
+
+    private init(
+        partialURL: URL,
+        envelope: SessionEnvelopeV1,
+        lastRecordedAt: Date?,
+        handle: FileHandle,
+        policy: SynchronizationPolicy,
+        limits: SessionPackageReaderLimitsV1
+    ) {
+        self.partialURL = partialURL
+        self.sessionID = envelope.sessionID
+        self.envelope = envelope
+        self.lastRecordedAtBeforeResume = lastRecordedAt
+        self.handle = handle
+        self.policy = policy
+        self.limits = limits
+        self.fileManager = .default
+        self.lastSynchronizedAt = Date()
     }
 
     public func appendDeviceMotionBatch(_ batch: DeviceMotionBatchV1) throws {

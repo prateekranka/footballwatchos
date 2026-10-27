@@ -1,6 +1,6 @@
 import { test } from '@e2e-dev/mobile';
 import { expect } from 'e2e';
-import { addManual, explore, fixture, latest, openFresh } from './support/football-ui.ts';
+import { addManual, dismissPopover, explore, fixture, latest, openFresh } from './support/football-ui.ts';
 
 test('manual reports show missing sensors and export and delete stay local', async ui => {
   const { app, screen } = ui;
@@ -27,13 +27,15 @@ test('manual reports show missing sensors and export and delete stay local', asy
   await expect(screen.getByRole('button', 'Share verified package', { exact: true })).toBeVisible();
   await app.screenshot('manual-details-export-ready');
   await screen.getByRole('button', 'Delete iPhone copy', { exact: true }).tap();
+  const confirmation = screen.getByRole('group', 'Delete iPhone copy?', { exact: true });
+  await expect(confirmation).toBeVisible();
   await app.screenshot('delete-confirmation');
-  const cancel = screen.getByRole('button', 'Cancel', { exact: true });
-  if (await cancel.isVisible()) await cancel.tap();
-  else await screen.getByTestId('PopoverDismissRegion').tap();
+  await dismissPopover(screen, confirmation);
+  await expect(confirmation).toBeHidden();
   await expect(screen.getByRole('button', 'Share verified package', { exact: true })).toBeVisible();
   await screen.getByRole('button', 'Delete iPhone copy', { exact: true }).tap();
-  await screen.getByRole('button', 'Delete iPhone copy', { exact: true }).last().tap();
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', 'Delete iPhone copy', { exact: true }).tap();
   await app.screenshot('session-after-delete');
   await app.restart();
   await expect(screen.getByText('No sessions yet', { exact: true })).toBeVisible();
@@ -58,6 +60,6 @@ test('recorded zero distance and a 15-second session stay distinct from missing 
   await app.screenshot('worst-case-sessions');
   await latest(ui, 'Football.*Watch recording');
   await app.screenshot('short-zero-distance-overview');
-  await expect(screen.getByText('15 s', { exact: true }).first()).toBeVisible();
-  await expect(screen.getByText('0.0 km', { exact: true })).toBeVisible();
+  await expect(screen.getByTestId('session-hero-duration')).toHaveText('15 s, Duration');
+  await expect(screen.getByTestId('session-hero-distance')).toHaveText('0.0 km, Distance');
 });

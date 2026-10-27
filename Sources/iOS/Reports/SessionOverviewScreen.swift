@@ -8,6 +8,8 @@ struct SessionOverviewScreen: View {
     let sessionID: UUID
     @State private var showsDeleteConfirmation = false
     @State private var selectedSeconds: Double?
+    @State private var insights: PerformanceCoachV1.SessionInsights?
+    @AppStorage("playerAge") private var playerAge = 0
 
     var body: some View {
         Group {
@@ -74,22 +76,22 @@ struct SessionOverviewScreen: View {
     private func overview(_ detail: FileSessionRepository.SessionDetail) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
-                Text(SessionRowFormatting.typeAndSource(detail.record))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                SessionHeroHeader(record: detail.record)
                 if detail.record.isManualEntry {
                     Label("Only the date, duration, and type were entered. No sensor readings were recorded.", systemImage: "square.and.pencil")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .performanceCard()
                 }
-                summaryRow(detail.record)
                 if !detail.record.isManualEntry {
                     UnfoldedHeroCard(
                         detail: detail,
                         observation: model.visualSummaries[sessionID]?.observation,
                         selectedSeconds: $selectedSeconds
                     )
+                    if let insights {
+                        SessionInsightsSection(insights: insights, ageIsSet: playerAge > 0)
+                    }
                 }
                 exploreSection(detail)
             }
@@ -97,37 +99,16 @@ struct SessionOverviewScreen: View {
             .padding(.top, 4)
             .padding(.bottom, 24)
         }
-    }
-
-    /// Three compact metrics. Only recorded values appear; missing evidence
-    /// shows an explicit dash.
-    private func summaryRow(_ record: FileSessionRepository.SessionRecord) -> some View {
-        AdaptiveMetricGroup {
-            StatBlock(
-                value: SessionRowFormatting.distanceLabel(meters: SessionRowFormatting.summaryDistance(record)),
-                caption: "Distance"
-            )
-            StatBlock(
-                value: SessionRowFormatting.durationLabel(SessionRowFormatting.summaryDuration(record)),
-                caption: "Duration"
-            )
-            StatBlock(
-                value: SessionRowFormatting.heartRateLabel(
-                    SessionRowFormatting.summaryAverageHeartRate(record)
-                ),
-                caption: "Avg heart rate"
-            )
+        .task(id: "\(detail.record.sessionID)-\(playerAge)") {
+            insights = detail.record.isManualEntry
+                ? nil
+                : PerformanceCoachV1.insights(for: detail, age: playerAge > 0 ? playerAge : nil)
         }
-        .padding(.vertical, 14)
-        .padding(.horizontal, PerformanceTheme.cardInset)
-        .performanceCard()
     }
 
     private func exploreSection(_ detail: FileSessionRepository.SessionDetail) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Explore this session")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(PerformanceTheme.primaryText)
+            SectionHeader(title: "Explore this session")
 
             VStack(spacing: 10) {
                 NavigationLink {
@@ -202,6 +183,176 @@ struct SessionOverviewScreen: View {
         case .completed: return PerformanceTheme.accent
         case .interrupted, .incompletePackage: return PerformanceTheme.warning
         }
+    }
+}
+
+/// The session at a glance on the green hero surface.
+struct SessionHeroHeader: View {
+    let record: FileSessionRepository.SessionRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: record.sessionEnvelope.footballType.symbolName)
+                    .font(.title2.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(SessionRowFormatting.typeAndSource(record))
+                        .font(.headline)
+                    Text(
+                        record.startedAt.formatted(.dateTime.weekday(.wide).day().month(.wide))
+                            + " · " + SessionRowFormatting.timeLabel(record.startedAt)
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
+
+            if case let .interrupted(reason) = record.completion.lifecycle {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Interrupted", systemImage: "exclamationmark.triangle.fill")
+                        .font(.headline)
+                        .foregroundStyle(PerformanceTheme.highlight)
+                    Text(SessionRowFormatting.interruptionDetail(reason))
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("session-hero-interrupted")
+            }
+
+            AdaptiveMetricGroup {
+                HeroStat(
+                    value: SessionRowFormatting.durationLabel(SessionRowFormatting.summaryDuration(record)),
+                    caption: "Duration",
+                    emphasised: true
+                )
+                .accessibilityIdentifier("session-hero-duration")
+                HeroStat(
+                    value: SessionRowFormatting.distanceLabel(meters: SessionRowFormatting.summaryDistance(record)),
+                    caption: "Distance"
+                )
+                .accessibilityIdentifier("session-hero-distance")
+                HeroStat(
+                    value: SessionRowFormatting.heartRateLabel(SessionRowFormatting.summaryAverageHeartRate(record)),
+                    caption: "Avg heart rate"
+                )
+                .accessibilityIdentifier("session-hero-heart")
+            }
+        }
+        .heroSurface()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("session-hero")
+    }
+}
+
+/// Intensity zones, effort metrics, and what to work on after this session.
+struct SessionInsightsSection: View {
+    let insights: PerformanceCoachV1.SessionInsights
+    let ageIsSet: Bool
+
+    private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PerformanceTheme.sectionSpacing) {
+            if insights.zoneSeconds > 0 {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(
+                        title: "Intensity",
+                        caption: "Time in each heart-rate zone. Max \(Int(insights.heartRateMax.rounded())) bpm "
+                            + (ageIsSet ? "from your age." : "estimated; set your age in Settings for accuracy.")
+                    )
+                    ZoneBreakdownView(zones: insights.zones, heartRateMax: insights.heartRateMax)
+                        .performanceCard()
+                        .accessibilityIdentifier("coach-zones")
+                }
+            }
+
+            ForEach(insights.evidenceNotes, id: \.self) { note in
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .performanceCard()
+            }
+
+            if !tiles.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(title: "Effort")
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(tiles, id: \.caption) { tile in
+                            MetricTile(icon: tile.icon, tint: tile.tint, value: tile.value, caption: tile.caption)
+                                .accessibilityIdentifier("coach-" + tile.caption)
+                        }
+                    }
+                }
+            }
+
+            if !insights.takeaways.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(title: "How to get better", caption: "What this session says to work on.")
+                    ForEach(insights.takeaways) { CoachTipCard(tip: $0) }
+                }
+            }
+        }
+    }
+
+    private struct Tile {
+        let icon: String
+        let tint: Color
+        let value: String
+        let caption: String
+    }
+
+    private var tiles: [Tile] {
+        var result: [Tile] = []
+        if let share = insights.highIntensityShare {
+            result.append(Tile(
+                icon: "flame.fill",
+                tint: PerformanceTheme.heartRate,
+                value: "\(Int((share * 100).rounded()))%",
+                caption: "Recorded HR time above 80% max"
+            ))
+        }
+        result.append(Tile(
+            icon: "bolt.heart.fill",
+            tint: PerformanceTheme.warning,
+            value: insights.highIntensityEffortCount.map(String.init) ?? "—",
+            caption: "Hard efforts"
+        ))
+        result.append(Tile(
+            icon: "arrow.clockwise.heart",
+            tint: PerformanceTheme.movement,
+            value: insights.medianRecoveryBetweenEffortsS.map { "\(Int($0.rounded())) s" } ?? "—",
+            caption: "Time between hard efforts"
+        ))
+        if let first = insights.firstHalfDistancePerMinute, let second = insights.secondHalfDistancePerMinute {
+            result.append(Tile(
+                icon: "figure.run",
+                tint: PerformanceTheme.accent,
+                value: "\(Int(first.rounded())) → \(Int(second.rounded()))",
+                caption: "m/min, 1st → 2nd half"
+            ))
+        }
+        if insights.sprintCount > 0 {
+            result.append(Tile(
+                icon: "hare.fill",
+                tint: PerformanceTheme.improve,
+                value: "\(insights.sprintCount)",
+                caption: "Sprints detected"
+            ))
+        }
+        if let peak = insights.peakHeartRate {
+            result.append(Tile(
+                icon: "heart.fill",
+                tint: PerformanceTheme.heartRate,
+                value: "\(Int(peak.rounded()))",
+                caption: "Peak bpm"
+            ))
+        }
+        return result
     }
 }
 
@@ -351,14 +502,13 @@ struct UnfoldedHeroCard: View {
     private var heartRateSegments: [ChartPreparationV1.Segment] {
         ChartPreparationV1.segments(
             from: detail.heartRateSnapshots.map { ($0.timestamp, $0.value) },
-            maximumGapSeconds: 120
+            maximumGapSeconds: 120,
+            relativeTo: startedAt
         )
     }
 
     private var sessionMinutes: Double {
-        let end = detail.record.completion.endedAt.timeIntervalSince(startedAt) / 60
-        let lastHeartRate = detail.heartRateSnapshots.last?.timestamp.timeIntervalSince(startedAt) ?? 0
-        return max(1, end, lastHeartRate / 60)
+        max(1, (SessionRowFormatting.summaryDuration(detail.record) ?? 0) / 60)
     }
 
     /// Per-minute distance deltas from the cumulative recorded distance.
@@ -372,6 +522,8 @@ struct UnfoldedHeroCard: View {
         var currentMinute = Int(points[0].timestamp.timeIntervalSince(startedAt) / 60)
         var currentMeters = 0.0
         for index in points.indices.dropFirst() {
+            let interval = points[index].timestamp.timeIntervalSince(points[index - 1].timestamp)
+            guard interval > 0, interval <= 120 else { continue }
             let delta = points[index].value - points[index - 1].value
             let minute = Int(points[index].timestamp.timeIntervalSince(startedAt) / 60)
             if delta > 0 {

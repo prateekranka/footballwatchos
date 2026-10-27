@@ -1,5 +1,21 @@
 import Foundation
 
+public struct ActiveRecordingMarkerV1: Codable, Sendable, Equatable {
+    public let sessionID: UUID
+    public let partialFilename: String
+    public let startedAt: Date
+    public let sessionType: FootballSessionTypeV1
+    public let motionPlanSource: MotionCaptureSourceV1
+
+    init(envelope: SessionEnvelopeV1) {
+        sessionID = envelope.sessionID
+        partialFilename = "\(envelope.sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)"
+        startedAt = envelope.startedAt
+        sessionType = envelope.footballType
+        motionPlanSource = envelope.captureSource
+    }
+}
+
 public enum StoredSessionPackageKindV1: String, Codable, Sendable, Equatable {
     case sealed
     case partial
@@ -73,6 +89,10 @@ public struct SessionPackageMetadataV1: Sendable, Equatable {
 /// intact, and writes a new interrupted package from verified frames only.
 public actor WatchSessionRepository {
     public let sessionsDirectory: URL
+
+    private var activeRecordingURL: URL {
+        sessionsDirectory.deletingLastPathComponent().appendingPathComponent("ActiveRecording.json")
+    }
 
     private let fileManager: FileManager
     private let limits: SessionPackageReaderLimitsV1
@@ -153,6 +173,7 @@ public actor WatchSessionRepository {
                 policy: policy,
                 limits: limits
             )
+            try writeActiveRecording(ActiveRecordingMarkerV1(envelope: envelope))
             WatchLog.repository.info(
                 "startWriter: created \(writer.partialURL.lastPathComponent, privacy: .public)"
             )
@@ -167,6 +188,49 @@ public actor WatchSessionRepository {
         }
     }
 
+    public func activeRecording() throws -> ActiveRecordingMarkerV1? {
+        guard fileManager.fileExists(atPath: activeRecordingURL.path) else { return nil }
+        let marker = try JSONDecoder().decode(
+            ActiveRecordingMarkerV1.self,
+            from: Data(contentsOf: activeRecordingURL)
+        )
+        guard marker.partialFilename == "\(marker.sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)" else {
+            throw SessionPackageError.sessionIdentityMismatch
+        }
+        return marker
+    }
+
+    public func writeActiveRecording(_ marker: ActiveRecordingMarkerV1) throws {
+        try JSONEncoder().encode(marker).write(to: activeRecordingURL, options: .atomic)
+    }
+
+    public func clearActiveRecording(sessionID: UUID? = nil) throws {
+        guard fileManager.fileExists(atPath: activeRecordingURL.path) else { return }
+        if let sessionID, try activeRecording()?.sessionID != sessionID { return }
+        try fileManager.removeItem(at: activeRecordingURL)
+    }
+
+    public func resumeWriter(sessionID: UUID) throws -> SessionPackageWriter {
+        try SessionPackageWriter.resume(
+            partialURL: partialURL(named: "\(sessionID.uuidString).\(FootySessionPackageV1.partialFileExtension)"),
+            sessionID: sessionID,
+            limits: limits
+        )
+    }
+
+    public func completeWriter(
+        _ writer: SessionPackageWriter,
+        completion: SessionCompletionV1
+    ) async throws -> URL {
+        let sealedURL = try await writer.complete(completion)
+        do {
+            try clearActiveRecording(sessionID: writer.sessionID)
+        } catch {
+            WatchLog.repository.logError("completeWriter: marker removal failed", error: error)
+        }
+        return sealedURL
+    }
+
     /// Creates a newly named `.footysession` recovery package. The original
     /// `.partial` file remains byte-for-byte untouched, including any torn tail.
     ///
@@ -179,7 +243,7 @@ public actor WatchSessionRepository {
             throw CocoaError(.fileNoSuchFile)
         }
         let scan = try FootySessionPackageV1.scanStructure(of: originalURL, limits: limits)
-        guard scan.envelope != nil else {
+        guard let envelope = scan.envelope else {
             throw SessionPackageError.missingSessionEnvelope
         }
 
@@ -191,53 +255,54 @@ public actor WatchSessionRepository {
         let recoveredURL = sessionsDirectory
             .appendingPathComponent("\(stem).recovered.\(UUID().uuidString)", isDirectory: false)
             .appendingPathExtension(FootySessionPackageV1.fileExtension)
+        let temporaryURL = recoveredURL.appendingPathExtension("tmp")
+        defer { try? fileManager.removeItem(at: temporaryURL) }
         try FileManager.default.createDirectory(
             at: recoveredURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        guard FileManager.default.createFile(atPath: recoveredURL.path, contents: nil) else {
+        guard fileManager.createFile(atPath: temporaryURL.path, contents: nil) else {
             throw SessionPackageError.destinationAlreadyExists
         }
 
         let completion = SessionCompletionV1(
-            endedAt: recoveredAt,
+            endedAt: scan.lastRecordedAt ?? envelope.startedAt,
             lifecycle: .interrupted(reason: .partialFileRecovery),
             summary: nil,
             healthKitSaveOutcome: .unavailable(reason: .notAttempted)
         )
-        var copiedFrameCount = 0
+        let copiedFrameCount: Int
+        let destination = try FileHandle(forWritingTo: temporaryURL)
         do {
-            let destination = try FileHandle(forWritingTo: recoveredURL)
-            do {
-                try FootySessionPackageV1.writeHeader(to: destination)
-                copiedFrameCount = try FootySessionPackageV1.streamVerifiedFrames(
-                    from: originalURL,
-                    to: destination,
-                    limits: limits
-                )
-                _ = try FootySessionPackageV1.append(
-                    frame: FootySessionFrameV1(payload: .completion(completion)),
-                    to: destination,
-                    limits: limits
-                )
-                try destination.synchronize()
-                try destination.close()
-            } catch {
-                try? destination.close()
-                throw error
-            }
+            try FootySessionPackageV1.writeHeader(to: destination)
+            copiedFrameCount = try FootySessionPackageV1.streamVerifiedFrames(
+                from: originalURL,
+                to: destination,
+                limits: limits
+            )
+            _ = try FootySessionPackageV1.append(
+                frame: FootySessionFrameV1(payload: .completion(completion)),
+                to: destination,
+                limits: limits
+            )
+            try destination.synchronize()
+            try destination.close()
         } catch {
-            // Do not leave a half-written recovery package in discovery.
-            try? fileManager.removeItem(at: recoveredURL)
+            try? destination.close()
             throw error
         }
         guard copiedFrameCount > 0 else {
             // Scan verified an envelope, so this is unreachable; fail closed.
-            try? fileManager.removeItem(at: recoveredURL)
             throw SessionPackageError.missingSessionEnvelope
         }
+        let recoveredScan = try FootySessionPackageV1.scanStructure(of: temporaryURL, limits: limits)
+        guard recoveredScan.status == .complete else { throw SessionPackageError.missingSessionEnvelope }
+        try fileManager.moveItem(at: temporaryURL, to: recoveredURL)
 
         try? (recoveredURL as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
+        // The recovered copy is already durable; a stale marker only costs one
+        // no-op HealthKit recovery attempt on the next launch.
+        try? clearActiveRecording(sessionID: envelope.sessionID)
 
         let startedAt = scan.envelope?.startedAt
         let recordedDuration: TimeInterval? = {
@@ -249,10 +314,29 @@ public actor WatchSessionRepository {
             originalFilename: filename,
             recoveredFilename: recoveredURL.lastPathComponent,
             sourceStatus: scan.status,
-            recoveredDigest: try FootySessionPackageV1.digest(of: recoveredURL),
+            recoveredDigest: recoveredScan.wholeFileDigest,
             startedAt: startedAt,
             recordedDuration: recordedDuration
         )
+    }
+
+    func validatedRecoveredFilename(
+        forPartialNamed filename: String,
+        discovered: [StoredSessionPackageV1]
+    ) throws -> String? {
+        let source = try FootySessionPackageV1.scanStructure(of: partialURL(named: filename), limits: limits)
+        guard let sessionID = source.envelope?.sessionID else { return nil }
+        let stem = (filename as NSString).deletingPathExtension
+        for package in discovered where package.kind == .sealed
+            && package.filename.hasPrefix("\(stem).recovered.") {
+            let url = sessionsDirectory.appendingPathComponent(package.filename)
+            guard let scan = try? FootySessionPackageV1.scanStructure(of: url, limits: limits),
+                  scan.status == .complete,
+                  scan.envelope?.sessionID == sessionID,
+                  scan.completion?.lifecycle == .interrupted(reason: .partialFileRecovery) else { continue }
+            return package.filename
+        }
+        return nil
     }
 
     /// Read-only display metadata for any package file in the sessions
@@ -311,6 +395,9 @@ public actor WatchSessionRepository {
             )
         }
         try fileManager.moveItem(at: originalURL, to: destinationURL)
+        if try activeRecording()?.partialFilename == filename {
+            try clearActiveRecording()
+        }
         return destinationURL.lastPathComponent
     }
 

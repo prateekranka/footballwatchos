@@ -2,7 +2,7 @@
 import Foundation
 
 enum QASessionScenario: String, CaseIterable, Identifiable {
-    case demo, worst, empty, one, many
+    case demo, worst, empty, one, many, coach, degraded
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -11,6 +11,8 @@ enum QASessionScenario: String, CaseIterable, Identifiable {
         case .empty: "Empty"
         case .one: "One"
         case .many: "1,000 rows"
+        case .coach: "Coach scenario"
+        case .degraded: "Degraded evidence"
         }
     }
 }
@@ -19,8 +21,11 @@ enum QASessionScenario: String, CaseIterable, Identifiable {
 /// codec, repository, analysis, and views consume them without special markup.
 enum QASessionFixtures {
     static func packages(for scenario: QASessionScenario, now: Date = .now) -> [[FootySessionFrameV1]] {
+        if scenario == .coach { return coachPackages(now: now, plans: coachPlan) }
+        if scenario == .degraded { return coachPackages(now: now, plans: degradedPlan) }
         let count: Int
         switch scenario {
+        case .coach, .degraded: count = 0
         case .empty: count = 0
         case .one: count = 1
         case .many: count = 1_000
@@ -92,6 +97,118 @@ enum QASessionFixtures {
                     activeEnergy: hasMotion ? SessionMetricV1(value: Double(420 + index * 40), unit: .kilocalories, provenance: .healthKitFinalWorkout) : nil
                 ),
                 healthKitSaveOutcome: hasMotion ? .saved(workoutUUID: nil) : .unavailable(reason: .notAttempted)
+            )
+            frames.append(FootySessionFrameV1(payload: .completion(completion)))
+            return frames
+        }
+    }
+
+    // MARK: - Coach scenario
+
+    /// A six-week history shaped to exercise the coaching layer end to end:
+    /// a steady base of 45-minute sessions, a manual log, an interrupted
+    /// recording, a week gap, and a load spike this week whose latest match
+    /// fades in the second half at a high heart rate. Dates are relative to
+    /// `now`, so the expected coaching output is the same on every run.
+    private struct PlannedSession {
+        let hoursAgo: Double
+        let minutes: Int
+        let type: FootballSessionTypeV1
+        /// Metres per minute in the first and second half; `nil` for no GPS.
+        let pace: (first: Double, second: Double)?
+        /// Mean heart rate for each half; `nil` for no heart rate.
+        let heartRate: (first: Double, second: Double)?
+        var manual = false
+        var interrupted = false
+        var hrInterval = 60
+        var hrStart = 0
+        var hrSampleLimit: Int? = nil
+        var distanceGap: ClosedRange<Int>? = nil
+        var recoveredNextDay = false
+        var artifactPeaks = false
+    }
+
+    private static let coachPlan: [PlannedSession] = [
+        PlannedSession(hoursAgo: 3, minutes: 90, type: .elevenASide, pace: (110, 70), heartRate: (165, 173)),
+        PlannedSession(hoursAgo: 48, minutes: 90, type: .sevenASide, pace: (100, 100), heartRate: (145, 145)),
+        PlannedSession(hoursAgo: 96, minutes: 90, type: .fiveASide, pace: (100, 98), heartRate: (143, 143)),
+        PlannedSession(hoursAgo: 144, minutes: 60, type: .training, pace: nil, heartRate: nil, manual: true),
+        PlannedSession(hoursAgo: 216, minutes: 45, type: .football, pace: (100, 100), heartRate: (140, 140)),
+        PlannedSession(hoursAgo: 288, minutes: 40, type: .fiveASide, pace: (95, 90), heartRate: (141, 141), interrupted: true),
+        PlannedSession(hoursAgo: 384, minutes: 45, type: .sevenASide, pace: (100, 100), heartRate: (142, 142)),
+        PlannedSession(hoursAgo: 552, minutes: 45, type: .football, pace: (100, 100), heartRate: (140, 140)),
+        PlannedSession(hoursAgo: 720, minutes: 45, type: .fiveASide, pace: (100, 100), heartRate: (139, 139)),
+        PlannedSession(hoursAgo: 1_056, minutes: 60, type: .football, pace: (98, 96), heartRate: (141, 141)),
+    ]
+
+    private static let degradedPlan: [PlannedSession] = [
+        PlannedSession(hoursAgo: 3, minutes: 77, type: .sevenASide, pace: (25, 25), heartRate: (169, 169), hrInterval: 120, hrSampleLimit: 40, distanceGap: 20...28, artifactPeaks: true),
+        PlannedSession(hoursAgo: 24.1, minutes: 5, type: .calibration, pace: nil, heartRate: (175, 175), interrupted: true, hrInterval: 10, recoveredNextDay: true),
+        PlannedSession(hoursAgo: 167, minutes: 77, type: .fiveASide, pace: (100, 80), heartRate: (169, 169), hrInterval: 10, hrStart: 60 * 60, distanceGap: 20...28, artifactPeaks: true),
+        PlannedSession(hoursAgo: 335, minutes: 77, type: .training, pace: nil, heartRate: nil, manual: true),
+        PlannedSession(hoursAgo: 503, minutes: 77, type: .football, pace: (30, 30), heartRate: (169, 169), hrInterval: 300, hrSampleLimit: 16, artifactPeaks: true),
+        PlannedSession(hoursAgo: 671, minutes: 77, type: .elevenASide, pace: (110, 70), heartRate: (165, 173), hrInterval: 10, artifactPeaks: true),
+    ]
+
+    private static func coachPackages(now: Date, plans: [PlannedSession]) -> [[FootySessionFrameV1]] {
+        plans.map { plan in
+            let start = now.addingTimeInterval(-plan.hoursAgo * 3_600)
+            let duration = Double(plan.minutes) * 60
+            let end = start.addingTimeInterval(duration)
+            let half = Double(plan.minutes) / 2
+            let noSensors: MotionCaptureSourceV1 = .unavailable(reason: .captureNotStarted)
+            let envelope = SessionEnvelopeV1(
+                sessionID: UUID(), createdAt: start, startedAt: start,
+                captureSource: plan.manual ? noSensors : .unavailable(reason: .hardwareUnsupported),
+                initialAccelerometerAvailability: .unavailable(reason: .hardwareUnsupported),
+                initialDeviceMotionAvailability: .unavailable(reason: .hardwareUnsupported),
+                sessionType: plan.type
+            )
+            var frames = [FootySessionFrameV1(payload: .envelope(envelope))]
+            var heartRates: [Double] = []
+            var meters = 0.0
+            if !plan.manual {
+                for second in stride(from: plan.hrStart, through: Int(duration), by: plan.hrInterval) {
+                    let index = (second - plan.hrStart) / plan.hrInterval
+                    guard plan.hrSampleLimit.map({ index < $0 }) ?? true else { break }
+                    if let heartRate = plan.heartRate {
+                        let base = Double(second) < duration / 2 ? heartRate.first : heartRate.second
+                        let bpm = plan.artifactPeaks && [13, 203, 401].contains(index)
+                            ? 225 : base + Double(index % 5) * 2 - 4
+                        heartRates.append(bpm)
+                        frames.append(FootySessionFrameV1(payload: .heartRateSnapshot(HeartRateSnapshotV1(
+                            timestamp: start.addingTimeInterval(Double(second)),
+                            beatsPerMinute: SessionMetricV1(value: bpm, unit: .beatsPerMinute, provenance: .healthKitLive)
+                        ))))
+                    }
+                }
+                for minute in 0...plan.minutes {
+                    let timestamp = start.addingTimeInterval(Double(minute) * 60)
+                    if let pace = plan.pace {
+                        meters = pace.first * min(Double(minute), half) + pace.second * max(0, Double(minute) - half)
+                        if !(plan.distanceGap?.contains(minute) ?? false) {
+                            frames.append(FootySessionFrameV1(payload: .distanceSnapshot(DistanceSnapshotV1(
+                                timestamp: timestamp,
+                                meters: SessionMetricV1(value: meters, unit: .meters, provenance: .healthKitLive)
+                            ))))
+                        }
+                    }
+                }
+            }
+            let provenance: MetricProvenanceV1 = plan.manual ? .userEntered : .healthKitFinalWorkout
+            let completion = SessionCompletionV1(
+                endedAt: plan.recoveredNextDay ? start.addingTimeInterval(86_400) : end,
+                lifecycle: plan.interrupted ? .interrupted(reason: .workoutEndedUnexpectedly) : .completed,
+                summary: plan.recoveredNextDay ? nil : SessionSummaryMetricsV1(
+                    duration: SessionMetricV1(value: duration, unit: .seconds, provenance: provenance),
+                    distance: plan.pace == nil ? nil : SessionMetricV1(value: meters, unit: .meters, provenance: provenance),
+                    averageHeartRate: heartRates.isEmpty ? nil : SessionMetricV1(
+                        value: heartRates.reduce(0, +) / Double(heartRates.count),
+                        unit: .beatsPerMinute,
+                        provenance: provenance
+                    )
+                ),
+                healthKitSaveOutcome: .unavailable(reason: .notAttempted)
             )
             frames.append(FootySessionFrameV1(payload: .completion(completion)))
             return frames

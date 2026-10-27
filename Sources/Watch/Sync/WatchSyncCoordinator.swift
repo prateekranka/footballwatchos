@@ -1,11 +1,14 @@
 import Combine
 import Foundation
+import os
 @preconcurrency import WatchConnectivity
+import WatchKit
 
 enum WatchSyncPresentation: Equatable, Sendable {
     case waitingForIPhone
     case importedOnIPhone
     case needsAttention
+    case notRequestedByPhone
 
     var title: String {
         switch self {
@@ -15,6 +18,8 @@ enum WatchSyncPresentation: Equatable, Sendable {
             return "Imported on iPhone"
         case .needsAttention:
             return "Sync needs attention"
+        case .notRequestedByPhone:
+            return "Kept on Watch"
         }
     }
 }
@@ -96,7 +101,17 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
     private let diagnosticJournal: WatchDiagnosticJournal?
     private var cachedRecords: [String: WatchTransferOutboxRecordV1] = [:]
     private var outboxFailure: String?
+    private var activationFailed = false
     private var diagnosticSubmissionInProgress = false
+    private var automaticRetryTask: Task<Void, Never>?
+    private var transferTask: Task<Void, Never>?
+    private var transferRequested = false
+    private var cancelledTransfers: [ObjectIdentifier: WCSessionFileTransfer] = [:]
+    private var backgroundTasks = Set<WKWatchConnectivityRefreshBackgroundTask>()
+    private var pendingContentObservation: NSKeyValueObservation?
+    nonisolated private let pendingBackgroundWork = OSAllocatedUnfairLock(initialState: 0)
+    private var pendingStatus: WatchSyncStatusV1?
+    private var publishedStatus: WatchSyncStatusV1?
 
     override init() {
         diagnosticJournal = WatchDiagnosticRuntime.shared.journal
@@ -112,6 +127,11 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
             self.session = session
             super.init()
             session.delegate = self
+            pendingContentObservation = session.observe(\.hasContentPending, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.completeBackgroundTasksIfReady()
+                }
+            }
             // Activation starts at launch; it is intentionally unrelated to
             // whether the iPhone happens to be reachable right now.
             session.activate()
@@ -156,6 +176,8 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
             return .importedOnIPhone
         case .retryableFailure:
             return .needsAttention
+        case .notRequestedByPhone:
+            return .notRequestedByPhone
         }
     }
 
@@ -176,10 +198,100 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         Array(cachedRecords.values)
     }
 
+    func retryFailedTransfers() async throws {
+        try await outbox?.retryFailedTransfers()
+        await refreshCachedStateNow()
+        submitClaimedRecordsIfEligible()
+    }
+
+    /// Filenames the outbox already tracks, read fresh so a launch-time sweep
+    /// does not re-inspect packages the cache has not loaded yet.
+    func trackedPackageFilenames() async -> Set<String> {
+        await refreshCachedStateNow()
+        return Set(cachedRecords.values.map(\.packageFilename))
+    }
+
+    func renewFailedTransfers() async throws {
+        try await outbox?.renewFailedTransferBudget()
+        await refreshCachedStateNow()
+        submitClaimedRecordsIfEligible()
+    }
+
+    /// Tells the iPhone how many sessions are still on the Watch. Application
+    /// context keeps only the latest value and is delivered when the iPhone
+    /// app next runs, which suits a status that is replaced, never queued.
+    func publish(_ status: WatchSyncStatusV1) {
+        pendingStatus = status
+        publishPendingStatusIfEligible()
+    }
+
+    private func publishPendingStatusIfEligible() {
+        guard let status = pendingStatus,
+              let session,
+              session.activationState == .activated,
+              session.isCompanionAppInstalled else { return }
+        // Unchanged counts only refresh the "last checked in" time, and not
+        // more than once a minute, so a busy outbox does not flood the link.
+        if let publishedStatus, publishedStatus.hasSameCounts(as: status),
+           status.updatedAt.timeIntervalSince(publishedStatus.updatedAt) < 60 {
+            return
+        }
+        do {
+            try session.updateApplicationContext([WatchSyncStatusV1.contextKey: try status.encoded()])
+            publishedStatus = status
+        } catch {
+            WatchLog.recorder.logError("publishSyncStatus failed", error: error)
+        }
+    }
+
+    private func applyPhoneLibrary(_ library: PhoneLibraryContextV1) async {
+        guard let outbox else { return }
+        do {
+            guard try await outbox.reconcile(withPhoneLibrary: library) else { return }
+            WatchLog.recorder.info("phoneLibrary: outbox changed to match \(library.knownSessionIDs.count, privacy: .public) iPhone sessions")
+            await refreshCachedStateNow()
+            submitClaimedRecordsIfEligible()
+        } catch {
+            outboxFailure = error.localizedDescription
+            stateGeneration &+= 1
+        }
+    }
+
     private func activatedOrUpdated() {
-        reconcileOutstandingTransfers()
+        if let session {
+            Self.storePlayerProfile(session.receivedApplicationContext)
+        }
+        publishPendingStatusIfEligible()
         submitClaimedRecordsIfEligible()
         submitPendingDiagnosticsIfEligible()
+    }
+
+    func refreshConnection() {
+        guard let session else { return }
+        if session.activationState == .notActivated {
+            session.activate()
+        } else if session.activationState == .activated {
+            activatedOrUpdated()
+        }
+    }
+
+    func handleBackgroundTask(_ task: WKWatchConnectivityRefreshBackgroundTask) {
+        backgroundTasks.insert(task)
+        refreshConnection()
+        completeBackgroundTasksIfReady()
+    }
+
+    private func completeBackgroundTasksIfReady(force: Bool = false) {
+        guard !backgroundTasks.isEmpty,
+              pendingBackgroundWork.withLock({ $0 == 0 }),
+              transferTask == nil, !diagnosticSubmissionInProgress,
+              force || activationFailed
+                || (session?.activationState == .activated && session?.hasContentPending == false) else { return }
+        let completed = backgroundTasks
+        backgroundTasks.removeAll()
+        for task in completed {
+            task.setTaskCompletedWithSnapshot(false)
+        }
     }
 
     private func submitPendingDiagnosticsIfEligible() {
@@ -209,28 +321,7 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
                     session.transferUserInfo([WatchDiagnosticTransferCodecV1.reportKey: payload])
                 }
                 self.diagnosticSubmissionInProgress = false
-            }
-        }
-    }
-
-    private func reconcileOutstandingTransfers() {
-        guard let session, let outbox else { return }
-        let keys = Set(session.outstandingFileTransfers.compactMap { transfer in
-            Self.transferKey(from: transfer.file.metadata)
-        })
-
-        Task { [weak self] in
-            do {
-                try await outbox.reconcileOutstandingTransfers(keys)
-                await self?.refreshCachedStateNow()
-                await MainActor.run {
-                    self?.submitClaimedRecordsIfEligible()
-                }
-            } catch {
-                await MainActor.run {
-                    self?.outboxFailure = error.localizedDescription
-                    self?.stateGeneration &+= 1
-                }
+                self.completeBackgroundTasksIfReady()
             }
         }
     }
@@ -243,43 +334,97 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
               session.activationState == .activated,
               session.isCompanionAppInstalled,
               let outbox else { return }
+        transferRequested = true
+        guard transferTask == nil else { return }
+        transferTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.transferTask = nil
+                self.completeBackgroundTasksIfReady()
+            }
+            repeat {
+                self.transferRequested = false
+                await self.submitPendingPackages(session: session, outbox: outbox)
+            } while self.transferRequested && !Task.isCancelled
+        }
+    }
 
-        Task { [weak self] in
-            do {
-                let records = try await outbox.claimRecordsForTransfer()
-                await self?.refreshCachedStateNow()
+    private func submitPendingPackages(session: WCSession, outbox: WatchTransferOutbox) async {
+        do {
+            if let library = PhoneLibraryContextV1.decode(context: session.receivedApplicationContext) {
+                _ = try await outbox.reconcile(withPhoneLibrary: library)
+            }
+            var discarded = Set<ObjectIdentifier>()
+            for transfer in session.outstandingFileTransfers {
+                let identity = ObjectIdentifier(transfer)
+                guard cancelledTransfers[identity] == nil,
+                      let key = Self.transferKey(from: transfer.file.metadata) else { continue }
+                let completed = transfer.progress.completedUnitCount
+                let total = transfer.progress.totalUnitCount
+                try await outbox.recordProgress(for: key, completed: completed, total: total)
+                let snapshot = await outbox.snapshot()
+                guard session.isReachable, total > 1, completed >= 0, completed < total,
+                      let record = snapshot.record(for: key), record.status == .queued,
+                      Date().timeIntervalSince(record.lastTransferProgressAt ?? Date())
+                        >= WatchTransferOutboxStateV1.stalledQueueTimeout else { continue }
+                cancelledTransfers[identity] = transfer
+                discarded.insert(identity)
+                transfer.cancel()
+                try await outbox.recordFrameworkCompletion(
+                    for: key,
+                    errorDescription: "The transfer stopped making progress. The Watch will retry automatically."
+                )
+            }
+            let outstanding = Set(session.outstandingFileTransfers.compactMap { transfer -> WatchTransferOutboxKeyV1? in
+                let identity = ObjectIdentifier(transfer)
+                guard cancelledTransfers[identity] == nil, !discarded.contains(identity) else { return nil }
+                return Self.transferKey(from: transfer.file.metadata)
+            })
+            try await outbox.reconcileOutstandingTransfers(outstanding)
+            let records = try await outbox.claimRecordsForTransfer()
+            outboxFailure = nil
+            await refreshCachedStateNow()
 
-                for record in records {
-                    do {
-                        let packageURL = try await outbox.compressedTransferURL(for: record)
-                        let envelope = SessionTransferEnvelopeV1(
-                            sessionID: record.key.sessionID,
-                            packageDigest: record.key.packageDigest,
-                            byteCount: record.byteCount,
-                            createdAt: record.createdAt
-                        )
-                        let metadata = try SessionTransferCodecV1.encodeTransferEnvelope(envelope)
-                        _ = await MainActor.run {
-                            session.transferFile(
-                                packageURL,
-                                metadata: [SessionTransferCodecV1.metadataKey: metadata]
-                            )
-                        }
-                    } catch {
-                        try await outbox.recordFrameworkCompletion(
-                            for: record.key,
-                            errorDescription: error.localizedDescription
-                        )
+            for record in records {
+                do {
+                    let packageURL = try await outbox.compressedTransferURL(for: record)
+                    let envelope = SessionTransferEnvelopeV1(
+                        sessionID: record.key.sessionID,
+                        packageDigest: record.key.packageDigest,
+                        byteCount: record.byteCount,
+                        createdAt: record.createdAt
+                    )
+                    let metadata = try SessionTransferCodecV1.encodeTransferEnvelope(envelope)
+                    if let library = PhoneLibraryContextV1.decode(context: session.receivedApplicationContext) {
+                        _ = try await outbox.reconcile(withPhoneLibrary: library)
                     }
-                }
-                await self?.refreshCachedStateNow()
-            } catch {
-                await MainActor.run {
-                    self?.outboxFailure = error.localizedDescription
-                    self?.stateGeneration &+= 1
+                    guard await outbox.snapshot().record(for: record.key)?.status == .queued else { continue }
+                    if session.outstandingFileTransfers.contains(where: {
+                        cancelledTransfers[ObjectIdentifier($0)] == nil
+                            && !discarded.contains(ObjectIdentifier($0))
+                            && Self.transferKey(from: $0.file.metadata) == record.key
+                    }) {
+                        continue
+                    }
+                    session.transferFile(
+                        packageURL,
+                        metadata: [SessionTransferCodecV1.metadataKey: metadata]
+                    )
+                    try await outbox.recordSubmission(for: record.key)
+                } catch {
+                    let failure = error as NSError
+                    WatchLog.recorder.logError("Watch package submission failed", error: error)
+                    try await outbox.recordFrameworkCompletion(
+                        for: record.key,
+                        errorDescription: "\(failure.localizedDescription) [\(failure.domain)#\(failure.code)]"
+                    )
                 }
             }
+        } catch {
+            WatchLog.recorder.logError("Watch sync failed", error: error)
+            outboxFailure = error.localizedDescription
         }
+        await refreshCachedStateNow()
     }
 
     private func refreshCachedState() {
@@ -293,6 +438,18 @@ final class WatchSyncCoordinator: NSObject, ObservableObject {
         let snapshot = await outbox.snapshot()
         cachedRecords = snapshot.records
         stateGeneration &+= 1
+        automaticRetryTask?.cancel()
+        automaticRetryTask = nil
+        let queuedDeadline = cachedRecords.values.contains { $0.status == .queued }
+            ? Date().addingTimeInterval(60) : nil
+        if let deadline = [snapshot.nextAutomaticRetryAt, queuedDeadline].compactMap({ $0 }).min() {
+            automaticRetryTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                } catch { return }
+                self?.submitClaimedRecordsIfEligible()
+            }
+        }
     }
 
     nonisolated private static func transferKey(from metadata: [String: Any]?) -> WatchTransferOutboxKeyV1? {
@@ -315,9 +472,12 @@ extension WatchSyncCoordinator: WCSessionDelegate {
     ) {
         Task { @MainActor [weak self] in
             if let error {
+                self?.activationFailed = true
                 self?.outboxFailure = error.localizedDescription
                 self?.stateGeneration &+= 1
+                self?.completeBackgroundTasksIfReady(force: true)
             } else if activationState == .activated {
+                self?.activationFailed = false
                 self?.outboxFailure = nil
                 self?.activatedOrUpdated()
             }
@@ -330,15 +490,32 @@ extension WatchSyncCoordinator: WCSessionDelegate {
         }
     }
 
+    nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        Task { @MainActor [weak self] in
+            self?.refreshConnection()
+        }
+    }
+
     nonisolated func session(
         _ session: WCSession,
         didFinish fileTransfer: WCSessionFileTransfer,
         error: Error?
     ) {
         let key = Self.transferKey(from: fileTransfer.file.metadata)
-        let errorDescription = error?.localizedDescription
+        let identity = ObjectIdentifier(fileTransfer)
+        let errorDescription = error.map { error in
+            let failure = error as NSError
+            return "\(failure.localizedDescription) [\(failure.domain)#\(failure.code)]"
+        }
+        pendingBackgroundWork.withLock { $0 += 1 }
         Task { @MainActor [weak self] in
-            guard let self, let outbox, let key else { return }
+            guard let self else { return }
+            defer {
+                self.pendingBackgroundWork.withLock { $0 -= 1 }
+                self.completeBackgroundTasksIfReady()
+            }
+            guard let outbox, let key else { return }
+            if self.cancelledTransfers.removeValue(forKey: identity) != nil { return }
             do {
                 try await outbox.recordFrameworkCompletion(
                     for: key,
@@ -352,11 +529,43 @@ extension WatchSyncCoordinator: WCSessionDelegate {
         }
     }
 
+    nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Self.storePlayerProfile(applicationContext)
+        guard let library = PhoneLibraryContextV1.decode(context: applicationContext) else { return }
+        pendingBackgroundWork.withLock { $0 += 1 }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.pendingBackgroundWork.withLock { $0 -= 1 }
+                self.completeBackgroundTasksIfReady()
+            }
+            await self.applyPhoneLibrary(library)
+        }
+    }
+
+    /// Zero clears the stored value, so removing the age on the iPhone
+    /// returns the Watch to its fallback.
+    nonisolated static func storePlayerProfile(_ context: [String: Any]) {
+        let key = PlayerProfileContextV1.maximumHeartRateKey
+        guard let value = context[key] as? Double else { return }
+        if let maximum = PlayerProfileContextV1.maximumHeartRate(in: context) {
+            UserDefaults.standard.set(maximum, forKey: key)
+        } else if value == 0 {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         if let data = userInfo[SessionTransferCodecV1.receiptKey] as? Data,
            let receipt = try? SessionTransferCodecV1.decodeReceipt(data) {
+            pendingBackgroundWork.withLock { $0 += 1 }
             Task { @MainActor [weak self] in
-                guard let self, let outbox else { return }
+                guard let self else { return }
+                defer {
+                    self.pendingBackgroundWork.withLock { $0 -= 1 }
+                    self.completeBackgroundTasksIfReady()
+                }
+                guard let outbox else { return }
                 do {
                     _ = try await outbox.recordReceipt(receipt)
                     await self.refreshCachedStateNow()
@@ -370,8 +579,14 @@ extension WatchSyncCoordinator: WCSessionDelegate {
 
         if let data = userInfo[WatchDiagnosticTransferCodecV1.receiptKey] as? Data,
            let receipt = try? WatchDiagnosticTransferCodecV1.decodeReceipt(data) {
+            pendingBackgroundWork.withLock { $0 += 1 }
             Task { @MainActor [weak self] in
-                guard let self, let diagnosticJournal else { return }
+                guard let self else { return }
+                defer {
+                    self.pendingBackgroundWork.withLock { $0 -= 1 }
+                    self.completeBackgroundTasksIfReady()
+                }
+                guard let diagnosticJournal else { return }
                 do {
                     try await diagnosticJournal.acknowledge(receipt)
                     self.submitPendingDiagnosticsIfEligible()

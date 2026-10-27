@@ -1,6 +1,7 @@
 import Combine
 import CoreMotion
 import Foundation
+import Synchronization
 
 struct MotionStreamMetrics: Sendable, Equatable {
     let reportedHz: Double?
@@ -59,14 +60,17 @@ enum MotionPersistenceEvent: Sendable {
 /// Bounded serial queue for app-side motion processing. Sensor callbacks
 /// enqueue mapped batches here; if the queue is backed up, batches are
 /// dropped and counted. Never blocks the caller.
-final class MotionDeliveryQueue: @unchecked Sendable {
+final class MotionDeliveryQueue: Sendable {
     private let queue = DispatchQueue(
         label: "com.prateekranka.footballperformance.motion-delivery",
         qos: .userInitiated
     )
-    private let lock = NSLock()
-    private var pending = 0
-    private var dropped = 0
+    private struct State {
+        var pending = 0
+        var dropped = 0
+        var accepting = true
+    }
+    private let state = Mutex(State())
     private let maxPending: Int
 
     init(maxPending: Int) {
@@ -75,28 +79,37 @@ final class MotionDeliveryQueue: @unchecked Sendable {
 
     @discardableResult
     func enqueue(_ work: @escaping @Sendable () -> Void) -> Bool {
-        lock.lock()
-        if pending >= maxPending {
-            dropped += 1
-            lock.unlock()
-            return false
+        let accepted = state.withLock { state in
+            guard state.accepting else { return false }
+            guard state.pending < maxPending else {
+                state.dropped += 1
+                return false
+            }
+            state.pending += 1
+            return true
         }
-        pending += 1
-        lock.unlock()
+        guard accepted else { return false }
         queue.async { [weak self] in
             work()
             guard let self else { return }
-            self.lock.lock()
-            self.pending -= 1
-            self.lock.unlock()
+            self.state.withLock { $0.pending -= 1 }
         }
         return true
     }
 
     var droppedCount: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return dropped
+        state.withLock { $0.dropped }
+    }
+
+    func stopAccepting() {
+        state.withLock { $0.accepting = false }
+    }
+
+    func drain() async {
+        stopAccepting()
+        while state.withLock({ $0.pending > 0 }) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 }
 
@@ -423,7 +436,7 @@ final class MotionCaptureController: ObservableObject {
     private let accelerometerStats = MotionStreamStatsBox()
     private let deviceMotionStats = MotionStreamStatsBox()
     private var plan: MotionCapturePlan?
-    private var ingress: MotionPackageIngress?
+    private(set) var ingress: MotionPackageIngress?
     private var failureBox: MotionStorageFailureBox?
     private var fallbackAccelerometerBuffer = FallbackBatchBuffer<AccelerometerSampleV1>()
     private var fallbackDeviceMotionBuffer = FallbackBatchBuffer<DeviceMotionSampleV1>()
@@ -471,6 +484,7 @@ final class MotionCaptureController: ObservableObject {
     func start(writer: SessionPackageWriter, plan: MotionCapturePlan) {
         stopActiveStreams()
         stopSnapshotTimer()
+        deliveryQueue = MotionDeliveryQueue(maxPending: 8)
         let captureID = UUID()
         self.captureID = captureID
         self.plan = plan
@@ -511,7 +525,23 @@ final class MotionCaptureController: ObservableObject {
     /// then waits for the single persistence consumer to synchronize the writer.
     func stopAndDrain() async -> MotionCaptureDrainResult {
         let activeID = captureID
+        let deliveryQueue = deliveryQueue
+        let ingress = ingress
+        let failureBox = failureBox
         stopActiveStreams()
+        stopSnapshotTimer()
+        await withCheckedContinuation { continuation in
+            fallbackQueue.addBarrierBlock { continuation.resume() }
+        }
+        await deliveryQueue.drain()
+        guard activeID == captureID else {
+            ingress?.finish()
+            return MotionCaptureDrainResult(
+                snapshot: .idle,
+                diagnostics: makeDiagnostics(),
+                storageFailure: await failureBox?.waitForFinish()
+            )
+        }
 
         if let plan, plan.source == .foregroundFallback {
             let accelerometerSamples = fallbackAccelerometerBuffer.drain()
@@ -536,19 +566,27 @@ final class MotionCaptureController: ObservableObject {
             }
         }
 
-        captureID = UUID()
+        let drainedID = UUID()
+        captureID = drainedID
         stopSnapshotTimer()
         publishSnapshotFromStats()
+        let finalSnapshot = snapshot
+        let diagnostics = makeDiagnostics()
+        let dropped = deliveryQueue.droppedCount
+        if dropped > 0 {
+            failureBox?.record("Motion delivery queue dropped \(dropped) batches (backlog).")
+        }
         ingress?.finish()
         let storageFailure = await failureBox?.waitForFinish()
-        let diagnostics = makeDiagnostics()
         let result = MotionCaptureDrainResult(
-            snapshot: snapshot,
+            snapshot: finalSnapshot,
             diagnostics: diagnostics,
             storageFailure: storageFailure
         )
-        ingress = nil
-        failureBox = nil
+        if captureID == drainedID {
+            self.ingress = nil
+            self.failureBox = nil
+        }
         return result
     }
 
@@ -556,6 +594,7 @@ final class MotionCaptureController: ObservableObject {
         captureID = UUID()
         stopActiveStreams()
         stopSnapshotTimer()
+        deliveryQueue.stopAccepting()
         let dropped = deliveryQueue.droppedCount
         if dropped > 0 {
             failureBox?.record("Motion delivery queue dropped \(dropped) batches (backlog).")
@@ -684,7 +723,7 @@ final class MotionCaptureController: ObservableObject {
     // dropped and counted, so a slow writer can never back-pressure the
     // sensor queue again.
 
-    private let deliveryQueue = MotionDeliveryQueue(maxPending: 8)
+    private(set) var deliveryQueue = MotionDeliveryQueue(maxPending: 8)
 
     /// Lock-protected accumulator for sprint-detection magnitudes. Filled on
     /// the delivery queue, drained on the main actor (never mutated off-main

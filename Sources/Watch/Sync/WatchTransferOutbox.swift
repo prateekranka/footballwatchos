@@ -30,6 +30,7 @@ enum WatchTransferOutboxStatusV1: String, Codable, Sendable, Equatable {
     case retryableFailure
     /// A matching, decoded receipt was durably recorded.
     case imported
+    case notRequestedByPhone
 }
 
 struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
@@ -44,6 +45,11 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
     var lastError: String?
     var lastUpdatedAt: Date
     var importedAt: Date?
+    var receipt: SyncReceiptV1?
+    var submittedAt: Date?
+    var completedTransferUnits: Int64?
+    var totalTransferUnits: Int64?
+    var lastTransferProgressAt: Date?
 
     init(
         transferEnvelope: SessionTransferEnvelopeV1,
@@ -62,6 +68,11 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
         self.lastError = nil
         self.lastUpdatedAt = now
         self.importedAt = nil
+        self.receipt = nil
+        self.submittedAt = nil
+        self.completedTransferUnits = nil
+        self.totalTransferUnits = nil
+        self.lastTransferProgressAt = nil
     }
 }
 
@@ -69,13 +80,37 @@ struct WatchTransferOutboxRecordV1: Codable, Sendable, Equatable {
 /// be verified without a WatchConnectivity runtime.
 struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     static let formatVersion = 1
+    static let receiptTimeout: TimeInterval = 300
+    static let maximumAutomaticAttempts = 4
+    static let stalledQueueTimeout: TimeInterval = 15 * 60
+
+    static func retryDelay(after attemptCount: Int) -> TimeInterval {
+        if attemptCount >= maximumAutomaticAttempts { return 15 * 60 }
+        return min(300, 30 * pow(2, Double(max(1, attemptCount) - 1)))
+    }
 
     let formatVersion: Int
     var records: [String: WatchTransferOutboxRecordV1]
+    private(set) var phoneLibrary: PhoneLibraryContextV1?
 
     init(records: [String: WatchTransferOutboxRecordV1] = [:]) {
         self.formatVersion = Self.formatVersion
         self.records = records
+    }
+
+    var nextAutomaticRetryAt: Date? {
+        records.values.compactMap { record -> Date? in
+            switch record.status {
+            case .pending:
+                return .distantPast
+            case .retryableFailure:
+                return record.lastUpdatedAt.addingTimeInterval(Self.retryDelay(after: record.attemptCount))
+            case .waitingForReceipt:
+                return record.lastUpdatedAt.addingTimeInterval(Self.receiptTimeout)
+            case .queued, .imported, .notRequestedByPhone:
+                return nil
+            }
+        }.min()
     }
 
     mutating func enqueue(
@@ -111,15 +146,33 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
     }
 
     mutating func claimRecordsForTransfer(now: Date) -> [WatchTransferOutboxRecordV1] {
+        for record in records.values where record.status == .waitingForReceipt
+            && now.timeIntervalSince(record.lastUpdatedAt) >= Self.receiptTimeout {
+            mutate(record.key, now: now) {
+                $0.status = .retryableFailure
+                $0.lastError = "No iPhone import receipt arrived; resend is pending."
+            }
+        }
         let candidates = records.values
-            .filter { $0.status == .pending || $0.status == .retryableFailure }
+            .filter {
+                $0.status == .pending
+                    || ($0.status == .retryableFailure
+                        && now.timeIntervalSince($0.lastUpdatedAt) >= Self.retryDelay(after: $0.attemptCount))
+            }
             .sorted { $0.createdAt < $1.createdAt }
 
         for candidate in candidates {
             mutate(candidate.key, now: now) { record in
                 record.status = .queued
+                if record.attemptCount >= Self.maximumAutomaticAttempts {
+                    record.attemptCount = 0
+                }
                 record.attemptCount += 1
                 record.lastError = nil
+                record.submittedAt = nil
+                record.completedTransferUnits = nil
+                record.totalTransferUnits = nil
+                record.lastTransferProgressAt = nil
             }
         }
 
@@ -131,6 +184,9 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         errorDescription: String?,
         now: Date
     ) {
+        guard let current = records[key.storageKey],
+              current.status != .imported,
+              current.status != .notRequestedByPhone else { return }
         mutate(key, now: now) { record in
             if let errorDescription {
                 record.status = .retryableFailure
@@ -144,6 +200,87 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         }
     }
 
+    mutating func recordSubmission(for key: WatchTransferOutboxKeyV1, now: Date) {
+        guard records[key.storageKey]?.status == .queued else { return }
+        mutate(key, now: now) { $0.submittedAt = now }
+    }
+
+    mutating func recordProgress(
+        for key: WatchTransferOutboxKeyV1,
+        completed: Int64,
+        total: Int64,
+        now: Date
+    ) {
+        guard let current = records[key.storageKey], current.status == .queued,
+              current.lastTransferProgressAt == nil
+                || current.completedTransferUnits != completed
+                || current.totalTransferUnits != total else { return }
+        mutate(key, now: now) {
+            $0.completedTransferUnits = completed
+            $0.totalTransferUnits = total
+            $0.lastTransferProgressAt = now
+        }
+    }
+
+    mutating func retryFailedTransfers(now: Date) {
+        for record in records.values where record.status == .retryableFailure
+            || record.status == .waitingForReceipt {
+            mutate(record.key, now: now) {
+                $0.status = .pending
+                $0.attemptCount = 0
+                $0.lastError = nil
+            }
+        }
+    }
+
+    /// A new launch gets a fresh attempt budget. Without this, a package that
+    /// used up its attempts (for example under an older build, or while the
+    /// iPhone app was missing) waited for a manual Recover tap forever.
+    mutating func renewFailedTransferBudget(now: Date) {
+        for record in records.values where record.status == .retryableFailure {
+            mutate(record.key, now: now) {
+                $0.status = .pending
+                $0.attemptCount = 0
+            }
+        }
+    }
+
+    @discardableResult
+    mutating func reconcile(withPhoneLibrary library: PhoneLibraryContextV1, now: Date) -> Bool {
+        guard library.generatedAt.timeIntervalSince1970.isFinite else { return false }
+        if let phoneLibrary {
+            guard library.generatedAt >= phoneLibrary.generatedAt else { return false }
+            guard library.generatedAt != phoneLibrary.generatedAt || library == phoneLibrary else { return false }
+        }
+        var changed = phoneLibrary != library
+        phoneLibrary = library
+        for record in records.values {
+            if library.knownSessionIDs.contains(record.key.sessionID) {
+                guard record.status != .imported,
+                      record.status != .notRequestedByPhone else { continue }
+                mutate(record.key, now: now) {
+                    $0.status = .notRequestedByPhone
+                    $0.lastError = nil
+                    $0.importedAt = nil
+                    $0.receipt = nil
+                }
+                changed = true
+            } else if record.status == .notRequestedByPhone
+                        || (record.status == .imported
+                            && (record.importedAt ?? .distantPast) < library.generatedAt) {
+                mutate(record.key, now: now) {
+                    $0.status = .pending
+                    $0.attemptCount = 0
+                    $0.importedAt = nil
+                    $0.receipt = nil
+                    $0.lastError = "The iPhone no longer has this session; resend is pending."
+                }
+                changed = true
+            }
+        }
+        return changed
+    }
+
     /// An outstanding transfer is retained as queued. If it disappeared before
     /// this process observed its completion callback, retry on a later
     /// activation rather than fabricating an imported state.
@@ -152,11 +289,21 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
         now: Date
     ) {
         for key in records.values.map(\.key) {
-            guard let record = records[key.storageKey], record.status == .queued else { continue }
-            guard !outstanding.contains(key) else { continue }
-            mutate(key, now: now) { mutableRecord in
-                mutableRecord.status = .retryableFailure
-                mutableRecord.lastError = "Framework transfer was no longer outstanding; retry is pending."
+            guard let record = records[key.storageKey],
+                  record.status != .imported,
+                  record.status != .notRequestedByPhone else { continue }
+            if outstanding.contains(key) {
+                if record.status != .queued {
+                    mutate(key, now: now) {
+                        $0.status = .queued
+                        $0.lastError = nil
+                    }
+                }
+            } else if record.status == .queued {
+                mutate(key, now: now) { mutableRecord in
+                    mutableRecord.status = .retryableFailure
+                    mutableRecord.lastError = "Framework transfer was no longer outstanding; retry is pending."
+                }
             }
         }
     }
@@ -168,11 +315,15 @@ struct WatchTransferOutboxStateV1: Codable, Sendable, Equatable {
             packageDigest: receipt.packageDigest
         )
         guard records[key.storageKey] != nil else { return false }
+        if let phoneLibrary,
+           !phoneLibrary.knownSessionIDs.contains(receipt.sessionID),
+           receipt.acknowledgedAt < phoneLibrary.generatedAt { return false }
 
         mutate(key, now: now) { record in
             record.status = .imported
             record.lastError = nil
             record.importedAt = receipt.acknowledgedAt
+            record.receipt = receipt
         }
         return true
     }
@@ -235,12 +386,27 @@ actor WatchTransferOutbox {
         try? (self.outboxDirectory as NSURL).setResourceValue(true, forKey: .isExcludedFromBackupKey)
 
         if fileManager.fileExists(atPath: stateURL.path) {
-            let decoded = try JSONDecoder().decode(
+            var decoded = try JSONDecoder().decode(
                 WatchTransferOutboxStateV1.self,
                 from: Data(contentsOf: stateURL)
             )
             guard decoded.formatVersion == WatchTransferOutboxStateV1.formatVersion else {
                 throw WatchTransferOutboxErrorV1.unsupportedStateFormat(decoded.formatVersion)
+            }
+            var didMigrate = false
+            for (key, var record) in decoded.records where record.status == .imported
+                && (record.receipt?.sessionID != record.key.sessionID
+                    || record.receipt?.packageDigest != record.key.packageDigest) {
+                record.status = .pending
+                record.attemptCount = 0
+                record.importedAt = nil
+                record.receipt = nil
+                record.lastError = nil
+                decoded.records[key] = record
+                didMigrate = true
+            }
+            if didMigrate {
+                try JSONEncoder().encode(decoded).write(to: stateURL, options: .atomic)
             }
             self.state = decoded
         } else {
@@ -269,19 +435,44 @@ actor WatchTransferOutbox {
             packageFilename: filename,
             now: now
         )
+        if let library = state.phoneLibrary {
+            state.reconcile(withPhoneLibrary: library, now: now)
+        }
         try persist()
-        return record
+        return state.record(for: record.key) ?? record
     }
 
     /// Claims only records which are safe to hand to the framework once. The
     /// state is persisted before `transferFile` is called so a crash cannot
     /// cause the same activation to forget that it attempted submission.
     func claimRecordsForTransfer(now: Date = Date()) throws -> [WatchTransferOutboxRecordV1] {
+        let before = state
         let records = state.claimRecordsForTransfer(now: now)
-        if !records.isEmpty {
+        if state != before {
             try persist()
         }
         return records
+    }
+
+    func retryFailedTransfers(now: Date = Date()) throws {
+        state.retryFailedTransfers(now: now)
+        try persist()
+    }
+
+    func renewFailedTransferBudget(now: Date = Date()) throws {
+        let before = state
+        state.renewFailedTransferBudget(now: now)
+        if state != before {
+            try persist()
+        }
+    }
+
+    func reconcile(withPhoneLibrary library: PhoneLibraryContextV1, now: Date = Date()) throws -> Bool {
+        let changed = state.reconcile(withPhoneLibrary: library, now: now)
+        if changed {
+            try persist()
+        }
+        return changed
     }
 
     func packageURL(for record: WatchTransferOutboxRecordV1) -> URL {
@@ -305,6 +496,22 @@ actor WatchTransferOutbox {
     ) throws {
         state.recordFrameworkCompletion(for: key, errorDescription: errorDescription, now: now)
         try persist()
+    }
+
+    func recordSubmission(for key: WatchTransferOutboxKeyV1, now: Date = Date()) throws {
+        state.recordSubmission(for: key, now: now)
+        try persist()
+    }
+
+    func recordProgress(
+        for key: WatchTransferOutboxKeyV1,
+        completed: Int64,
+        total: Int64,
+        now: Date = Date()
+    ) throws {
+        let before = state
+        state.recordProgress(for: key, completed: completed, total: total, now: now)
+        if state != before { try persist() }
     }
 
     func reconcileOutstandingTransfers(

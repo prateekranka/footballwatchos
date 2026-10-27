@@ -1,0 +1,168 @@
+name: iOS CI
+
+on:
+  push:
+    branches: ['claude/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test-and-screenshot:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      BUNDLE_ID: com.prateekranka.footballperformance
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode 26
+        run: |
+          ls -d /Applications/Xcode*.app
+          XCODE=$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          cp Sources/iOS/Sync/SessionStoreCredentials.swift.template Sources/iOS/Sync/SessionStoreCredentials.swift
+          xcodegen generate
+
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          best = None
+          for runtime, entries in devices.items():
+              if "iOS-26" not in runtime:
+                  continue
+              for device in entries:
+                  if device["name"].startswith("iPhone") and "Max" not in device["name"]:
+                      candidate = (runtime, device["name"], device["udid"])
+                      if best is None or candidate > best:
+                          best = candidate
+          print(best[2] if best else "")
+          ')
+          test -n "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: E2E journeys
+        run: |
+          mkdir -p build
+          set +e
+          xcodebuild test \
+            -project FootballPerformance.xcodeproj \
+            -scheme FootballPerformanceE2E \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath build/DD \
+            -resultBundlePath build/E2E.xcresult \
+            CODE_SIGNING_ALLOWED=NO > build/e2e.log 2>&1
+          status=$?
+          set -e
+          grep -E "error:|failed|passed|\*\* TEST|XCTAssert" build/e2e.log | head -200 || true
+          mkdir -p shots/e2e
+          xcrun xcresulttool export attachments --path build/E2E.xcresult --output-path shots/e2e || true
+          exit $status
+
+      - name: Screenshots
+        if: success() || failure()
+        run: |
+          UDID=${{ steps.sim.outputs.udid }}
+          APP=$(find build/DD/Build/Products -maxdepth 2 -name "Football Performance.app" -path "*iphonesimulator*" | head -1)
+          if [ -z "$APP" ]; then
+            xcodebuild build -project FootballPerformance.xcodeproj -scheme FootballPerformance \
+              -destination "platform=iOS Simulator,id=$UDID" -derivedDataPath build/DD CODE_SIGNING_ALLOWED=NO -quiet
+            APP=$(find build/DD/Build/Products -maxdepth 2 -name "Football Performance.app" -path "*iphonesimulator*" | head -1)
+          fi
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --batteryLevel 100 || true
+          xcrun simctl install "$UDID" "$APP"
+          mkdir -p shots
+          shoot() {
+            local name=$1; shift
+            xcrun simctl terminate "$UDID" "$BUNDLE_ID" || true
+            xcrun simctl launch "$UDID" "$BUNDLE_ID" "$@"
+            sleep 10
+            xcrun simctl io "$UDID" screenshot "shots/$name.png"
+          }
+          QA=(-FP_UI_QA YES -onboardingCompleted YES)
+          shoot 1-sessions-coach "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB sessions
+          shoot 2-progress-coach "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB progress
+          shoot 3-settings "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB settings
+          shoot 4-sessions-empty "${QA[@]}" -FP_QA_SCENARIO empty -FP_QA_TAB sessions
+          shoot 5-onboarding -FP_UI_QA YES -onboardingCompleted NO
+          xcrun simctl ui "$UDID" appearance dark
+          shoot 6-sessions-coach-dark "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB sessions
+          shoot 7-progress-coach-dark "${QA[@]}" -FP_QA_SCENARIO coach -FP_QA_TAB progress
+          ls -la shots
+
+      - name: Publish screenshots to the ci-shots branch
+        if: success() || failure()
+        run: |
+          [ -d shots ] || exit 0
+          SRC_SHA=$(git rev-parse --short HEAD)
+          cp build/e2e.log shots/ 2>/dev/null || true
+          cd shots
+          git init -q
+          git checkout -q -b ci-shots
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Screenshots for ${GITHUB_REF_NAME}@${SRC_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-shots
+
+      - name: Simulator build
+        if: success() || failure()
+        run: |
+          xcodebuild build \
+            -project FootballPerformance.xcodeproj \
+            -scheme FootballPerformance \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build/SimDD \
+            ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO -quiet
+          APP="build/SimDD/Build/Products/Debug-iphonesimulator/Football Performance.app"
+          lipo -info "$APP/Football Performance"
+          mkdir -p simbuild
+          ditto -c -k --keepParent "$APP" simbuild/FootballPerformance-simulator.zip
+          ls -la simbuild
+          SRC_SHA=$(git rev-parse --short HEAD)
+          cd simbuild
+          git init -q
+          git checkout -q -b ci-sim-build
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A
+          git commit -qm "Simulator build for ${GITHUB_REF_NAME}@${SRC_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-sim-build
+
+      - name: Upload simulator build
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FootballPerformance-simulator
+          path: simbuild/FootballPerformance-simulator.zip
+          if-no-files-found: ignore
+
+      - name: Upload test results
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build/E2E.xcresult
+            build/*.log
+            shots

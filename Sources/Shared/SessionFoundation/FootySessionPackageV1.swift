@@ -138,6 +138,7 @@ public struct SessionPackageScanV1: Sendable, Equatable {
     public let completion: SessionCompletionV1?
     public let status: SessionPackageReadStatusV1
     public let frameCount: Int
+    public let validPrefixByteCount: UInt64
     public let wholeFileDigest: SessionDigestV1
     /// The latest absolute timestamp recorded in any frame of the package
     /// (snapshot, diagnostics, quality, sprint, or completion frame). Nil when
@@ -150,6 +151,7 @@ public struct SessionPackageScanV1: Sendable, Equatable {
         completion: SessionCompletionV1?,
         status: SessionPackageReadStatusV1,
         frameCount: Int,
+        validPrefixByteCount: UInt64,
         wholeFileDigest: SessionDigestV1,
         lastRecordedAt: Date? = nil
     ) {
@@ -157,6 +159,7 @@ public struct SessionPackageScanV1: Sendable, Equatable {
         self.completion = completion
         self.status = status
         self.frameCount = frameCount
+        self.validPrefixByteCount = validPrefixByteCount
         self.wholeFileDigest = wholeFileDigest
         self.lastRecordedAt = lastRecordedAt
     }
@@ -179,6 +182,7 @@ public enum SessionPackageError: Error, Sendable, Equatable {
     case notAPartialPackage
     case writerIsSealed
     case invalidSynchronizationPolicy
+    case sessionIdentityMismatch
 }
 
 /// An append-only format:
@@ -375,6 +379,7 @@ public enum FootySessionPackageV1 {
         var lastRecordedAt: Date?
         var frameCount = 0
         var sawCompletion = false
+        var validPrefixByteCount = UInt64(headerByteCount)
 
         while true {
             switch try scanNextFrame(
@@ -390,6 +395,7 @@ public enum FootySessionPackageV1 {
                     completion: completion,
                     status: sawCompletion ? .complete : .incomplete,
                     frameCount: frameCount,
+                    validPrefixByteCount: validPrefixByteCount,
                     wholeFileDigest: SessionDigestV1(bytes: Data(wholeFileHasher.finalize())),
                     lastRecordedAt: lastRecordedAt
                 )
@@ -399,6 +405,7 @@ public enum FootySessionPackageV1 {
                     completion: completion,
                     status: .tornTail,
                     frameCount: frameCount,
+                    validPrefixByteCount: validPrefixByteCount,
                     wholeFileDigest: SessionDigestV1(bytes: Data(wholeFileHasher.finalize())),
                     lastRecordedAt: lastRecordedAt
                 )
@@ -412,6 +419,7 @@ public enum FootySessionPackageV1 {
                 }
                 sawCompletion = kind == .completion
                 frameCount += 1
+                validPrefixByteCount = try handle.offset()
             }
         }
     }

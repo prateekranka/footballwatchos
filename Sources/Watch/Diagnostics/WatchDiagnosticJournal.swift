@@ -218,7 +218,7 @@ actor WatchDiagnosticJournal {
             try Self.persist(state, to: stateURL)
         } catch {
             state = previous
-            WatchLog.journal.logError("appendLog could not be persisted", error: error)
+            WatchLog.journal.error("appendLog could not be persisted — \(error.localizedDescription, privacy: .public)")
         }
     }
 

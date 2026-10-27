@@ -13,6 +13,16 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     static let sessionImportedNotification = Notification.Name(
         "com.prateekranka.footballperformance.sessionImported"
     )
+    /// Posted once for every received file, whatever happened to it. A repeat
+    /// or rejected file never posts `sessionImportedNotification`, so
+    /// "receiving" must end here instead.
+    static let deliveryFinishedNotification = Notification.Name(
+        "com.prateekranka.footballperformance.deliveryFinished"
+    )
+    /// Posted when the Watch reports a new count of its saved sessions.
+    static let watchStatusNotification = Notification.Name(
+        "com.prateekranka.footballperformance.watchStatus"
+    )
 
     private let repository: FileSessionRepository
     private let diagnosticRepository: PhoneDiagnosticRepository
@@ -20,6 +30,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     private let sessionPushOutbox: SessionPushOutbox
     private let configuration: FileSessionRepository.Configuration
     private let session: WCSession
+    @MainActor private var contextGeneration: UInt64 = 0
 
     init(
         repository: FileSessionRepository,
@@ -43,6 +54,75 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         session.delegate = self
         session.activate()
         requeueDurableReceipts()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerProfileMayHaveChanged),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func playerProfileMayHaveChanged() {
+        sendContext()
+    }
+
+    func refreshConnection() {
+        if session.activationState == .notActivated {
+            session.activate()
+        } else if session.activationState == .activated {
+            requeueDurableReceipts()
+            sendContext()
+        }
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        refreshConnection()
+    }
+
+    /// Application context keeps only the latest value and reaches the Watch
+    /// the next time it runs, so an age change or a library change made while
+    /// the Watch is away still arrives. Each update replaces the whole
+    /// dictionary, so every key is sent every time.
+    private func sendContext() {
+        guard session.activationState == .activated,
+              session.isPaired,
+              session.isWatchAppInstalled else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.contextGeneration &+= 1
+            let generation = self.contextGeneration
+            let known = await self.repository.knownSessionIDs()
+            guard self.contextGeneration == generation else { return }
+            self.updateContext(knownSessionIDs: known)
+        }
+    }
+
+    @MainActor
+    private func updateContext(knownSessionIDs: Set<UUID>?) {
+        guard session.activationState == .activated,
+              session.isPaired,
+              session.isWatchAppInstalled else { return }
+        let age = UserDefaults.standard.integer(forKey: "playerAge")
+        let maximum = age > 0 ? PerformanceCoachV1.heartRateMax(age: age, observedPeak: nil) : 0
+        var context: [String: Any] = [PlayerProfileContextV1.maximumHeartRateKey: maximum]
+
+        let previous = PhoneLibraryContextV1.decode(context: session.applicationContext)
+        if let knownSessionIDs {
+            // A new time only when the list changed: the Watch resends any
+            // session whose receipt is older than this time.
+            let library: PhoneLibraryContextV1
+            if let previous, previous.knownSessionIDs == knownSessionIDs {
+                library = previous
+            } else {
+                library = PhoneLibraryContextV1(knownSessionIDs: knownSessionIDs, generatedAt: Date())
+            }
+            context.merge(library.contextEntries) { _, new in new }
+        } else if let previous {
+            context.merge(previous.contextEntries) { _, new in new }
+        }
+
+        guard !NSDictionary(dictionary: session.applicationContext).isEqual(to: context) else { return }
+        try? session.updateApplicationContext(context)
     }
 
     func session(
@@ -54,6 +134,23 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         // descriptive value is intentionally local diagnostic information.
         _ = error.map { String(describing: $0) }
         requeueDurableReceipts()
+        sendContext()
+        storeWatchStatus(from: session.receivedApplicationContext)
+    }
+
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        storeWatchStatus(from: applicationContext)
+    }
+
+    private func storeWatchStatus(from context: [String: Any]) {
+        guard let status = WatchSyncStatusV1.decode(context: context) else { return }
+        if let stored = WatchSyncStatusStore.load(), stored.updatedAt >= status.updatedAt { return }
+        WatchSyncStatusStore.save(status)
+        NotificationCenter.default.post(name: Self.watchStatusNotification, object: nil)
+    }
+
+    func sessionWatchStateDidChange(_ session: WCSession) {
+        sendContext()
     }
 
     func session(_ session: WCSession, didReceive file: WCSessionFile) {
@@ -83,6 +180,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
             // itself did not finish.
             let failureDescription = String(describing: error)
             NSLog("FootballPerformance could not stage a Watch package: %@", failureDescription)
+            NotificationCenter.default.post(name: Self.deliveryFinishedNotification, object: nil)
             return
         }
 
@@ -138,6 +236,7 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
                 }
                 Task { await outbox.retryAll() }
                 self?.requeueDurableReceipts()
+                self?.sendContext()
             } catch {
                 let failureDescription = String(describing: error)
                 NSLog("FootballPerformance could not reconcile iPhone packages: %@", failureDescription)
@@ -150,10 +249,12 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
         let outbox = sessionPushOutbox
         Task { [weak self, repository, outbox] in
             let outcome = await repository.importStaged(deliveryID: deliveryID)
+            NotificationCenter.default.post(name: Self.deliveryFinishedNotification, object: nil)
             guard let payload = outcome.receiptPayload else { return }
             self?.queueReceipt(payload)
             if case let .imported(record, _) = outcome {
                 NotificationCenter.default.post(name: Self.sessionImportedNotification, object: nil)
+                self?.sendContext()
                 await outbox.enqueue(sessionID: record.sessionID, repository: repository)
                 Task { await outbox.pushOne() }
             }
@@ -186,6 +287,20 @@ final class PhoneWatchConnectivityCoordinator: NSObject, WCSessionDelegate, @unc
     }
 }
 
+/// The last Watch status survives relaunch, so the iPhone can say what the
+/// Watch still holds before the Watch next checks in.
+enum WatchSyncStatusStore {
+    static func load(defaults: UserDefaults = .standard) -> WatchSyncStatusV1? {
+        guard let data = defaults.data(forKey: WatchSyncStatusV1.contextKey) else { return nil }
+        return try? WatchSyncStatusV1.decode(data)
+    }
+
+    static func save(_ status: WatchSyncStatusV1, defaults: UserDefaults = .standard) {
+        guard let data = try? status.encoded() else { return }
+        defaults.set(data, forKey: WatchSyncStatusV1.contextKey)
+    }
+}
+
 /// Constructs the local repository once and starts WatchConnectivity from the
 /// app's initializer, before the first scene becomes visible.
 final class PhoneTransferRuntime: @unchecked Sendable {
@@ -202,12 +317,11 @@ final class PhoneTransferRuntime: @unchecked Sendable {
         do {
             var configuration = try FileSessionRepository.Configuration.applicationSupport()
             #if DEBUG && targetEnvironment(simulator)
-            let isUnitTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA") || isUnitTesting
+            let isolatedTesting = UserDefaults.standard.bool(forKey: "FP_UI_QA")
             if isolatedTesting {
                 configuration = FileSessionRepository.Configuration(
                     rootDirectory: configuration.rootDirectory.deletingLastPathComponent()
-                        .appendingPathComponent(isUnitTesting ? "FootballPerformanceUnitTests" : "FootballPerformanceQA", isDirectory: true)
+                        .appendingPathComponent("FootballPerformanceQA", isDirectory: true)
                 )
             }
             #endif
@@ -253,5 +367,9 @@ final class PhoneTransferRuntime: @unchecked Sendable {
     func start() {
         coordinator?.activate()
         coordinator?.reconcileAndRequeueAtStartup()
+    }
+
+    func refreshConnection() {
+        coordinator?.refreshConnection()
     }
 }

@@ -12,7 +12,7 @@ struct OnboardingView: View {
     private let pages: [(title: String, text: String, symbol: String)] = [
         (
             "Your football sessions",
-            "Keep your football history in one place, from a quick training session to a full 11-a-side session.",
+            "Log every game and training session. See your load, intensity, and work rate, and get drills that make you fitter on the pitch.",
             "figure.soccer"
         ),
         (
@@ -36,10 +36,10 @@ struct OnboardingView: View {
                     .foregroundStyle(PerformanceTheme.accent)
 
                 Image(systemName: pages[page].symbol)
-                    .font(.system(size: 64, weight: .light))
-                    .foregroundStyle(PerformanceTheme.accent)
-                    .frame(maxWidth: .infinity, minHeight: 150)
-                    .background(PerformanceTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 28))
+                    .font(.system(size: 64, weight: .medium))
+                    .foregroundStyle(PerformanceTheme.highlight)
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                    .heroSurface()
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 16) {
@@ -56,7 +56,10 @@ struct OnboardingView: View {
                 .id(page)
                 .transition(.opacity)
 
-                if page == 1 {
+                if page == 0 {
+                    guidance("Track your load", detail: "Minutes per week, streaks, and warnings when you ramp up too fast.", symbol: "gauge.with.dots.needle.67percent")
+                    guidance("Get better every week", detail: "Each session ends with what to work on and a drill to do it.", symbol: "figure.soccer")
+                } else if page == 1 {
                     guidance("Record on Watch", detail: "Your Watch records without a phone or internet connection.", symbol: "waveform.path.ecg")
                     guidance("Log on iPhone", detail: "Choose Football, 5-a-side, 7-a-side, 11-a-side, Training, or Calibration.", symbol: "square.and.pencil")
                 } else if page == 2 {
@@ -111,11 +114,7 @@ struct OnboardingView: View {
 
     private func guidance(_ title: String, detail: String, symbol: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol)
-                .font(.title3)
-                .foregroundStyle(PerformanceTheme.accent)
-                .frame(width: 28)
-                .accessibilityHidden(true)
+            IconBadge(systemName: symbol, tint: PerformanceTheme.accent, size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
                 Text(detail)

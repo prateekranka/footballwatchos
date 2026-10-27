@@ -24,7 +24,7 @@ struct SessionVisualSummary: Codable, Equatable, Sendable {
     let computedAt: Date
 
     /// Bumped whenever derived presentation rules change.
-    static let currentAnalysisVersion = 2
+    static let currentAnalysisVersion = 3
 }
 
 /// Computes and caches `SessionVisualSummary` values off the main actor.
@@ -109,8 +109,12 @@ actor SessionPreviewStore {
             return nil
         }
 
-        let endedAt = record.completion.endedAt
         let startedAt = record.sessionEnvelope.startedAt
+        let duration = record.recordedDurationSeconds ?? 0
+        let endedAt = startedAt.addingTimeInterval(duration)
+        let acceptedHeartRate = SessionEvidenceV1.acceptedHeartRate(
+            scan.heartRateSnapshots.map { ($0.timestamp, $0.value) }, start: startedAt, duration: duration
+        )
 
         // Truncated input would make bins describe only part of the session,
         // so both derived visuals are withheld rather than partial.
@@ -118,11 +122,11 @@ actor SessionPreviewStore {
         var observation: SessionObservationV1?
         if !scan.heartRateTruncated, !scan.distanceTruncated {
             fingerprint = SessionFingerprintV1.build(
-                from: scan.heartRateSnapshots.map { ($0.timestamp, $0.value) },
+                from: acceptedHeartRate.map { ($0.timestamp, $0.value) },
                 startedAt: startedAt,
                 endedAt: endedAt
             )
-            if let fingerprint {
+            if let fingerprint, record.evidence?.hasWholeSessionHeartRate == true {
                 observation = SessionObservationEngineV1.busiestStretch(from: fingerprint)
             }
         }

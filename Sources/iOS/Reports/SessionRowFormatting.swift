@@ -46,7 +46,7 @@ enum SessionRowFormatting {
     }
 
     static func summaryDuration(_ record: FileSessionRepository.SessionRecord) -> Double? {
-        record.completion.summary?.duration?.value
+        record.recordedDurationSeconds
     }
 
     static func summaryAverageHeartRate(_ record: FileSessionRepository.SessionRecord) -> Double? {

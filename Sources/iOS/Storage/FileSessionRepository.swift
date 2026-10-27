@@ -40,9 +40,15 @@ public actor FileSessionRepository {
         public let transferEnvelope: SessionTransferEnvelopeV1
         public let sessionEnvelope: SessionEnvelopeV1
         public let completion: SessionCompletionV1
+        public let evidence: SessionEvidenceV1?
 
         public var id: UUID { sessionID }
         public var startedAt: Date { sessionEnvelope.startedAt }
+        public var recordedDurationSeconds: Double? {
+            evidence?.durationSeconds ?? SessionEvidenceV1.duration(
+                envelope: sessionEnvelope, completion: completion, lastRecordedAt: nil
+            )
+        }
         public var isManualEntry: Bool {
             completion.summary?.duration?.provenance == .userEntered
         }
@@ -50,7 +56,8 @@ public actor FileSessionRepository {
         public init(
             transferEnvelope: SessionTransferEnvelopeV1,
             sessionEnvelope: SessionEnvelopeV1,
-            completion: SessionCompletionV1
+            completion: SessionCompletionV1,
+            evidence: SessionEvidenceV1? = nil
         ) {
             self.sessionID = sessionEnvelope.sessionID
             self.packageDigest = transferEnvelope.packageDigest
@@ -58,6 +65,7 @@ public actor FileSessionRepository {
             self.transferEnvelope = transferEnvelope
             self.sessionEnvelope = sessionEnvelope
             self.completion = completion
+            self.evidence = evidence
         }
     }
 
@@ -209,6 +217,7 @@ public actor FileSessionRepository {
     private let tombstonesURL: URL
     private var index: Index
     private var tombstones: TombstoneStore
+    private var hasReconciled = false
 
     public init(
         configuration: Configuration? = nil,
@@ -339,7 +348,8 @@ public actor FileSessionRepository {
         let record = SessionRecord(
             transferEnvelope: metadata,
             sessionEnvelope: inspected.sessionEnvelope,
-            completion: inspected.completion
+            completion: inspected.completion,
+            evidence: try Self.evidence(at: targetURL)
         )
         index = Index(schemaVersion: 1, entries: sorted(index.entries + [record]))
         try writeJSONAtomically(index, to: indexURL)
@@ -370,15 +380,42 @@ public actor FileSessionRepository {
             try fileManager.createDirectory(at: targetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try writeDataAtomically(SessionTransferCodecV1.encodeTransferEnvelope(metadata), to: storedMetadataURL(for: targetURL))
             try fileManager.moveItem(at: draftURL, to: targetURL)
-            let record = SessionRecord(transferEnvelope: metadata, sessionEnvelope: inspected.sessionEnvelope, completion: inspected.completion)
+            let record = SessionRecord(transferEnvelope: metadata, sessionEnvelope: inspected.sessionEnvelope, completion: inspected.completion, evidence: try Self.evidence(at: targetURL))
             index = Index(schemaVersion: 1, entries: index.entries + [record])
         }
         try writeJSONAtomically(index, to: indexURL)
     }
     #endif
 
+    private static func evidence(at url: URL) throws -> SessionEvidenceV1 {
+        let scan = try FootySessionPackageV1.scanBoundedSnapshots(of: url)
+        guard let envelope = scan.envelope, let completion = scan.completion else {
+            throw SessionTransferErrorV1.incompletePackage
+        }
+        let lastRecordedAt: Date?
+        if completion.lifecycle != .completed || completion.summary?.duration == nil {
+            lastRecordedAt = try FootySessionPackageV1.scanStructure(of: url).lastRecordedAt
+        } else {
+            lastRecordedAt = nil
+        }
+        return SessionEvidenceV1.evaluate(
+            envelope: envelope, completion: completion, lastRecordedAt: lastRecordedAt,
+            heartRate: scan.heartRateSnapshots.map { ($0.timestamp, $0.value) },
+            distance: scan.distanceSnapshots.map { ($0.timestamp, $0.value) },
+            truncated: scan.heartRateTruncated || scan.distanceTruncated
+        )
+    }
+
     public func sessions() -> [SessionRecord] {
         sorted(index.entries)
+    }
+
+    /// Sessions the Watch need not send again: held here, or deleted here on
+    /// purpose. Nil until startup reconcile has loaded the index, because an
+    /// empty list would tell the Watch to resend everything.
+    public func knownSessionIDs() -> Set<UUID>? {
+        guard hasReconciled else { return nil }
+        return Set(index.entries.map(\.sessionID)).union(tombstones.entries.map(\.sessionID))
     }
 
     /// Rebuilds the index, recovers an interrupted promote, and processes
@@ -388,6 +425,7 @@ public actor FileSessionRepository {
         tombstones = try loadTombstones()
         try rebuildIndexFromPackages()
         try reconcileIncomingStaging()
+        hasReconciled = true
     }
 
     public func detail(for sessionID: UUID) throws -> SessionDetail {
@@ -504,7 +542,7 @@ public actor FileSessionRepository {
         if !tombstones.entries.contains(where: {
             $0.sessionID == record.sessionID && $0.packageDigest == record.packageDigest
         }) {
-            tombstones = TombstoneStore(
+            let updatedTombstones = TombstoneStore(
                 schemaVersion: 1,
                 entries: tombstones.entries + [
                     Tombstone(
@@ -514,7 +552,8 @@ public actor FileSessionRepository {
                     )
                 ]
             )
-            try writeJSONAtomically(tombstones, to: tombstonesURL)
+            try writeJSONAtomically(updatedTombstones, to: tombstonesURL)
+            tombstones = updatedTombstones
         }
 
         let packageURL = packageURL(for: record)
@@ -614,7 +653,8 @@ public actor FileSessionRepository {
                 record = SessionRecord(
                     transferEnvelope: metadata,
                     sessionEnvelope: promoted.sessionEnvelope,
-                    completion: promoted.completion
+                    completion: promoted.completion,
+                    evidence: try Self.evidence(at: targetURL)
                 )
             } else {
                 // Write the sidecar before the package move. If the process is
@@ -626,7 +666,8 @@ public actor FileSessionRepository {
                 record = SessionRecord(
                     transferEnvelope: metadata,
                     sessionEnvelope: inspected.sessionEnvelope,
-                    completion: inspected.completion
+                    completion: inspected.completion,
+                    evidence: try Self.evidence(at: targetURL)
                 )
             }
 
@@ -740,7 +781,10 @@ public actor FileSessionRepository {
                     let record = SessionRecord(
                         transferEnvelope: storedEnvelope,
                         sessionEnvelope: inspected.sessionEnvelope,
-                        completion: inspected.completion
+                        completion: inspected.completion,
+                        evidence: try index.entries.first(where: {
+                            $0.packageDigest == storedEnvelope.packageDigest && $0.evidence != nil
+                        })?.evidence ?? Self.evidence(at: candidateURL)
                     )
                     if let existing = recordsBySessionID[record.sessionID], existing.packageDigest != record.packageDigest {
                         try quarantineStoredPackage(candidateURL, reason: "Stored session identifier conflicts with a different digest")
